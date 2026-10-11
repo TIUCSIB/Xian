@@ -22,6 +22,7 @@ private class MainViewModelFactory(
             app.playerController,
             app.favoriteRepository,
             app.searchHistoryStore,
+            app.playHistoryStore,
         ) as T
     }
 }

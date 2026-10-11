@@ -111,6 +111,32 @@ class PlayerController(private val context: Context) {
         ctrl.currentMediaItem?.let { ctrl.addMediaItem(it) }
     }
 
+    /**
+     * 历史回放:曲子已在队列则跳播(不重复入列);队列空则单曲入列;
+     * 否则追加到队尾起播 —— 不打乱现有队列。
+     */
+    fun playFromHistory(item: MediaItem) = withController { ctrl ->
+        val idx = (0 until ctrl.mediaItemCount).firstOrNull {
+            ctrl.getMediaItemAt(it).mediaId == item.mediaId
+        }
+        when {
+            idx != null -> {
+                ctrl.seekTo(idx, 0L)
+                ctrl.play()
+            }
+            ctrl.mediaItemCount == 0 -> {
+                ctrl.setMediaItems(listOf(item), 0, 0L)
+                ctrl.prepare()
+                ctrl.play()
+            }
+            else -> {
+                ctrl.addMediaItem(ctrl.mediaItemCount, item)
+                ctrl.seekTo(ctrl.mediaItemCount - 1, 0L)
+                ctrl.play()
+            }
+        }
+    }
+
     fun toggleShuffle() = withController { it.shuffleModeEnabled = !it.shuffleModeEnabled }
 
     fun cycleRepeatMode() = withController { ctrl ->

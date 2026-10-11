@@ -1,16 +1,26 @@
 package dev.avsong.ui
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
@@ -24,10 +34,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -44,6 +59,11 @@ import dev.avsong.ui.library.LibraryScreen
 import dev.avsong.ui.login.LoginScreen
 import dev.avsong.ui.player.PlayerScreen
 import dev.avsong.ui.queue.PlaylistScreen
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.runtime.remember
+import dev.avsong.ui.common.SongList
+import dev.avsong.ui.common.StateHint
 import dev.avsong.ui.queue.QueueContent
 import dev.avsong.ui.queue.QueueScreen
 import dev.avsong.ui.search.SearchScreen
@@ -82,6 +102,9 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
     var showFavoritePicker by remember { mutableStateOf(false) }
     // 迷你条的队列入口:底部抽屉(不再跳队列页;Routes.QUEUE 仅播放页右上入口在用)
     var showQueueSheet by remember { mutableStateOf(false) }
+    // 抽屉内双 tab:0=当前播放 1=历史播放(打开时保持上次选中的 tab)
+    var queueTab by remember { mutableStateOf(0) }
+    val playHistory by viewModel.playHistory.collectAsState()
 
     // 播放错误 → Snackbar(带重试动作)
     LaunchedEffect(state.player.error) {
@@ -129,13 +152,26 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                     .navigationBarsPadding()
                     .padding(bottom = 12.dp),
             ) {
-                Text(
-                    "播放队列 · ${state.player.queue.size}",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp),
-                )
-                QueueContent(
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                ) {
+                    DrawerTab(
+                        text = "当前播放",
+                        selected = queueTab == 0,
+                        badge = state.player.queue.size.takeIf { it > 0 },
+                        onClick = { queueTab = 0 },
+                    )
+                    DrawerTab(
+                        text = "历史播放",
+                        selected = queueTab == 1,
+                        onClick = { queueTab = 1 },
+                    )
+                }
+                when (queueTab) {
+                    0 -> QueueContent(
                     queue = state.player.queue,
                     currentIndex = state.player.currentIndex,
                     onPlayAt = { index ->
@@ -149,7 +185,28 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                     isPlaying = state.player.isPlaying,
                     showReorder = false,
                     listState = queueListState,
-                )
+                    )
+                    1 -> if (playHistory.isEmpty()) {
+                        Box(
+                            Modifier.fillMaxWidth().weight(1f),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            StateHint(
+                                Icons.Rounded.History,
+                                "还没有播放记录",
+                                "播放过的歌会出现在这里",
+                            )
+                        }
+                    } else {
+                        SongList(
+                            songs = playHistory,
+                            onPlay = { songs, index -> viewModel.playFromHistory(songs[index]) },
+                            showPlayButton = false,
+                            currentMediaId = state.player.currentMediaId,
+                            isPlaying = state.player.isPlaying,
+                        )
+                    }
+                }
             }
         }
     }
@@ -293,6 +350,54 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         positionProvider = viewModel::currentPosition,
                     )
                 }
+            }
+        }
+    }
+}
+
+/** 抽屉头部小 tab:选中变黄加粗;badge 数字贴在文字右上角(徽标样式,用户要求)。 */
+@Composable
+private fun DrawerTab(
+    text: String,
+    selected: Boolean,
+    badge: Int? = null,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) MaterialTheme.colorScheme.onSurface
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (badge != null) {
+            Box(
+                Modifier
+                    .padding(start = 3.dp)
+                    .offset(y = (-4).dp)
+                    .widthIn(min = 16.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+                    .padding(horizontal = 3.dp, vertical = 1.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "$badge",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
             }
         }
     }

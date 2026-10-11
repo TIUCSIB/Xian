@@ -68,6 +68,7 @@ class MainViewModel(
     private val playerController: PlayerController,
     val favoriteRepository: dev.avsong.data.FavoriteRepository,
     private val searchHistoryStore: dev.avsong.data.SearchHistoryStore,
+    private val playHistoryStore: dev.avsong.data.PlayHistoryStore,
     private val lyricRepository: LyricRepository = LyricRepository(),
 ) : ViewModel() {
 
@@ -87,6 +88,7 @@ class MainViewModel(
             playerController.playerState().collect { ps ->
                 _state.update { it.copy(player = ps) }
                 loadLyricFor(ps)
+                recordPlayHistory(ps)
             }
         }
         viewModelScope.launch {
@@ -95,10 +97,41 @@ class MainViewModel(
                 _state.update { it.copy(searchHistory = h) }
             }
         }
+        viewModelScope.launch { playHistoryStore.load() }
         loadHome()
     }
 
     private var lastLyricMediaId: String? = null
+
+    /** 播放历史对外只读流;抽屉「历史播放」tab 用。 */
+    val playHistory = playHistoryStore.history
+
+    private var lastHistoryMediaId: String? = null
+
+    /**
+     * 起播即记历史:当前曲变化时记一次快照(同曲的状态刷新不重复记)。
+     * 快照取自 PlayerState —— mediaId=bvid、artworkUri=原始封面 URL,回放时够用。
+     */
+    private fun recordPlayHistory(ps: PlayerState) {
+        val mediaId = ps.currentMediaId ?: return
+        if (mediaId == lastHistoryMediaId) return
+        lastHistoryMediaId = mediaId
+        val title = ps.title.orEmpty()
+        if (title.isBlank()) return
+        viewModelScope.launch {
+            playHistoryStore.record(
+                Song(
+                    bvid = mediaId,
+                    cid = null,
+                    aid = 0,
+                    title = title,
+                    artist = ps.artist.orEmpty(),
+                    coverUrl = ps.artworkUri,
+                    durationSec = ps.durationMs / 1000,
+                )
+            )
+        }
+    }
 
     private fun loadLyricFor(ps: PlayerState) {
         val mediaId = ps.currentMediaId
@@ -322,6 +355,9 @@ class MainViewModel(
     fun cycleRepeat() = playerController.cycleRepeatMode()
     fun retryPlayback() = playerController.retry()
     fun playAt(index: Int) = playerController.playAt(index)
+
+    /** 历史回放:在队列则跳播,否则追加队尾起播(不打乱现有队列)。 */
+    fun playFromHistory(song: Song) = playerController.playFromHistory(song.toMediaItem())
     fun removeFromQueue(index: Int) = playerController.removeAt(index)
     fun moveInQueue(from: Int, to: Int) = playerController.moveItem(from, to)
 

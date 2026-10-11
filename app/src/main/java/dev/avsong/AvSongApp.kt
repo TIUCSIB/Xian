@@ -11,6 +11,7 @@ import dev.avsong.data.BiliHttp
 import dev.avsong.data.BiliSongRepository
 import dev.avsong.data.CollectionStore
 import dev.avsong.data.FavoriteRepository
+import dev.avsong.data.PlayHistoryStore
 import dev.avsong.data.SearchHistoryStore
 import dev.avsong.data.auth.AuthStore
 import dev.avsong.player.PlayerController
@@ -39,6 +40,9 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
     lateinit var collectionStore: CollectionStore
         private set
 
+    lateinit var playHistoryStore: PlayHistoryStore
+        private set
+
     /** 真实 B 站数据源(匿名单例,UI 与 ExoPlayer resolver 共用)。 */
     val songRepository: BiliSongRepository get() = BiliSongRepository
 
@@ -49,6 +53,7 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
         favoriteRepository = FavoriteRepository(authStore)
         searchHistoryStore = SearchHistoryStore(this)
         collectionStore = CollectionStore(this)
+        playHistoryStore = PlayHistoryStore(this)
 
         // 登录态 → OkHttp 拦截器的 Cookie 注入点(含启动时的持久化恢复)
         appScope.launch {
