@@ -34,7 +34,9 @@ import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
@@ -149,6 +151,15 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
         }
     }
 
+    // 队列插入反馈(下一首播放/加入队列):同下载反馈走 Toast
+    val queueNotice by viewModel.queueNotice.collectAsState()
+    LaunchedEffect(queueNotice) {
+        queueNotice?.let {
+            Toast.makeText(appContext, it, Toast.LENGTH_SHORT).show()
+            viewModel.consumeQueueNotice()
+        }
+    }
+
     if (showFavoritePicker) {
         val bvid = state.player.currentMediaId ?: ""
         if (bvid.isNotBlank()) {
@@ -230,33 +241,29 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                             BarAction(Icons.Rounded.FavoriteBorder, "收藏当前歌曲") {
                                 if (state.player.currentMediaId != null) showFavoritePicker = true
                             }
-                            Box {
-                                var showClearConfirm by remember { mutableStateOf(false) }
-                                BarAction(Icons.Rounded.DeleteSweep, "清空播放队列") {
-                                    showClearConfirm = true
-                                }
-                                // 确认气泡:清空是破坏性操作,防误触(用户要求)
-                                DropdownMenu(
-                                    expanded = showClearConfirm,
+                            var showClearConfirm by remember { mutableStateOf(false) }
+                            BarAction(Icons.Rounded.DeleteSweep, "清空播放队列") {
+                                showClearConfirm = true
+                            }
+                            // 清空确认用模态对话框(用户要求,不用气泡菜单)
+                            if (showClearConfirm) {
+                                AlertDialog(
                                     onDismissRequest = { showClearConfirm = false },
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("确定清空队列?") },
-                                        onClick = {
+                                    title = { Text("清空播放队列?") },
+                                    text = {
+                                        Text("将移除队列中的全部 ${state.player.queue.size} 首歌曲,此操作不可撤销。")
+                                    },
+                                    confirmButton = {
+                                        TextButton(onClick = {
                                             viewModel.clearQueue()
                                             showClearConfirm = false
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                "取消",
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        },
-                                        onClick = { showClearConfirm = false },
-                                    )
-                                }
+                                        }) { Text("清空", color = MaterialTheme.colorScheme.primary) }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = { showClearConfirm = false }) { Text("取消") }
+                                    },
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                )
                             }
                         }
                         QueueContent(
@@ -353,6 +360,8 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onRefresh = { viewModel.loadHome(force = true) },
                         onLoadMore = viewModel::loadMoreHome,
                         onLogin = { navController.navigate(Routes.LOGIN) },
+                        onPlayNext = viewModel::playNext,
+                        onAddToQueue = viewModel::addToQueue,
                     )
                 }
                 composable(Routes.SEARCH) {
@@ -365,6 +374,8 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onHistoryClick = viewModel::searchFromHistory,
                         onHistoryRemove = viewModel::removeHistory,
                         onHistoryClear = viewModel::clearHistory,
+                        onPlayNext = viewModel::playNext,
+                        onAddToQueue = viewModel::addToQueue,
                     )
                 }
                 composable(Routes.PLAYLIST) {
@@ -376,6 +387,10 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                             navController.navigate(
                                 Routes.collection(collection.mid, collection.seasonId, collection.title),
                             )
+                        },
+                        onPlayFolder = { folder -> viewModel.playFolderPlaylist(folder.id) },
+                        onPlayCollection = { collection ->
+                            viewModel.playCollectionPlaylist(collection.mid, collection.seasonId)
                         },
                         onLogin = { navController.navigate(Routes.LOGIN) },
                     )

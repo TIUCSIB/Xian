@@ -58,6 +58,8 @@ fun SearchScreen(
     onHistoryClick: (String) -> Unit = {},
     onHistoryRemove: (String) -> Unit = {},
     onHistoryClear: () -> Unit = {},
+    onPlayNext: (Song) -> Unit = {},
+    onAddToQueue: (Song) -> Unit = {},
 ) {
     Column(
         Modifier
@@ -107,6 +109,8 @@ fun SearchScreen(
                     SongList(
                         songs = search.songs,
                         onPlay = onPlay,
+                        onPlayNext = onPlayNext,
+                        onAddToQueue = onAddToQueue,
                         hasMore = search.hasMore,
                         loadingMore = search.loadingMore,
                         onLoadMore = onLoadMore,

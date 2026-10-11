@@ -48,7 +48,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -160,14 +159,15 @@ fun PlayerScreen(
 
             Spacer(Modifier.weight(1f))
 
-            // 信息卡:毛玻璃(封面模糊+黑纱)/ 曲名 / 歌手 / 进度 / (点击切换歌词)
-            FrostedCard(artworkUri = state.artworkUri, shape = cardShape, modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showLyric = !showLyric }
-                        .padding(horizontal = 20.dp, vertical = 18.dp),
-                ) {
+            // 信息卡:实心纯色卡(Spotify 风格,毛玻璃已按用户要求移除)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(cardShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .clickable { showLyric = !showLyric }
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
+            ) {
                 Text(
                     text = state.title ?: "未在播放",
                     style = MaterialTheme.typography.titleLarge,
@@ -217,19 +217,19 @@ fun PlayerScreen(
                     }
                 }
             }
-            }
 
             Spacer(Modifier.height(12.dp))
 
-            // 控制卡:毛玻璃 / 模式 | 上一首 | 播放(黄) | 下一首 | 队列
-            FrostedCard(artworkUri = state.artworkUri, shape = cardShape, modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 18.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
+            // 控制卡:实心纯色卡 / 模式 | 上一首 | 播放(黄) | 下一首 | 队列
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(cardShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
                 // 播放模式键:单击循环切换(列表循环→单曲循环→随机→顺序),图标随模式变
                 CircleButton(onClick = onCycleMode, size = 44) {
                     val (modeIcon, modeDesc) = when {
@@ -287,7 +287,6 @@ fun PlayerScreen(
                         modifier = Modifier.size(20.dp),
                     )
                 }
-                }
             }
 
             Spacer(Modifier.height(16.dp))
@@ -314,32 +313,6 @@ private fun CircleButton(
     }
 }
 
-/** 毛玻璃卡:封面原图模糊铺满 + 半透明黑纱(近似磨砂质感,无阴影)。 */
-@Composable
-private fun FrostedCard(
-    artworkUri: String?,
-    modifier: Modifier = Modifier,
-    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(28.dp),
-    content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit,
-) {
-    Box(modifier.clip(shape)) {
-        if (artworkUri != null) {
-            AsyncImage(
-                model = artworkUri,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .matchParentSize()
-                    .blur(18.dp),
-            )
-            Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.38f)))
-        } else {
-            Box(Modifier.matchParentSize().background(MaterialTheme.colorScheme.surfaceContainerHigh))
-        }
-        content()
-    }
-}
-
 /**
  * 音波进度条:竖条波形,已播黄条 / 未播灰条;点击与横向拖动均直接 seek。
  * 条高取稳定伪随机序列,视觉上是固定形状的一条音波(与进度无关)。
@@ -357,7 +330,8 @@ private fun WaveformSeekBar(
     var dragFraction by remember { mutableStateOf<Float?>(null) }
     val fraction = dragFraction ?: progress
     val playedColor = MaterialTheme.colorScheme.primary
-    val unplayedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+    // 未播条用实心灰(用户反馈半透明灰会让卡片显得透明)
+    val unplayedColor = MaterialTheme.colorScheme.outline
 
     Canvas(
         modifier

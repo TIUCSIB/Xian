@@ -64,6 +64,8 @@ fun HomeScreen(
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
     onLogin: () -> Unit,
+    onPlayNext: (Song) -> Unit = {},
+    onAddToQueue: (Song) -> Unit = {},
 ) {
     Column(
         Modifier
@@ -105,6 +107,8 @@ fun HomeScreen(
                     songs = state.homeSongs.drop(FEATURED_COUNT),
                     // 队列仍用整榜,点第 4 行实际入列的是全榜第 4 位
                     onPlay = { _, index -> onPlay(state.homeSongs, index + FEATURED_COUNT) },
+                    onPlayNext = onPlayNext,
+                    onAddToQueue = onAddToQueue,
                     showRank = true,
                     rankOffset = FEATURED_COUNT,
                     showPlayButton = false,

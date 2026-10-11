@@ -1,27 +1,33 @@
 package dev.avsong.ui.library
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -40,6 +46,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,13 +62,18 @@ import kotlinx.coroutines.launch
 
 /**
  * 「歌单」tab(底部导航第三项):歌单中心 = UP 主合集(本地订阅)+ B 站收藏夹。
- * 2026-10-11 起播放队列全面收进迷你条/播放页的队列抽屉,本 tab 不再渲染队列
- * (此前的「歌单 tab = 播放队列」方案已废弃,用户拍板:队列只在抽屉里)。
+ * 版式(用户 2026-10-11 指定):两列网格卡片 —— 正方形封面,左上角数字徽标,
+ * 封面右下角播放钮(直接播整个歌单),封面下方一行歌单名(上方图片下方标题)。
+ * ⚠ B 站收藏夹/合集的列表接口没有播放数字段,徽标放的是歌单项数(media_count/total)。
+ * 播放队列不在此页(只留迷你条/播放页抽屉)。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PlaylistScreen(
     onOpenFolder: (FavoriteRepository.Folder) -> Unit,
     onOpenCollection: (SavedCollection) -> Unit,
+    onPlayFolder: (FavoriteRepository.Folder) -> Unit,
+    onPlayCollection: (SavedCollection) -> Unit,
     onLogin: () -> Unit,
 ) {
     val vm = rememberLibraryViewModel()
@@ -98,11 +111,19 @@ fun PlaylistScreen(
             }
         }
 
-        LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-            // UP 主合集(本地保存):任何人的合集,粘链接添加,当歌单播
-            item {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, bottom = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            // UP 主合集(本地订阅):任何人的合集,粘链接添加,当歌单播
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 6.dp, end = 2.dp, top = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -121,31 +142,38 @@ fun PlaylistScreen(
             }
             if (state.collectionError != null && !showAddCollection) {
                 // 对话框关闭后残留的网络错误,贴在区块下提示
-                item {
+                item(span = { GridItemSpan(maxLineSpan) }) {
                     Text(
                         state.collectionError!!,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
             }
             items(state.collections, key = { "col-${it.mid}-${it.seasonId}" }) { collection ->
-                CollectionRow(
-                    collection = collection,
-                    onClick = { onOpenCollection(collection) },
-                    onRemove = { vm.removeCollection(collection.mid, collection.seasonId) },
+                PlaylistCard(
+                    title = collection.title,
+                    cover = collection.cover,
+                    count = collection.total,
+                    onOpen = { onOpenCollection(collection) },
+                    onPlay = { onPlayCollection(collection) },
+                    // 长按移除本地订阅(随时可重新添加,故不加确认)
+                    onLongClick = { vm.removeCollection(collection.mid, collection.seasonId) },
                 )
             }
 
             when {
-                state.loading -> item {
-                    Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
+                state.loading -> item(span = { GridItemSpan(maxLineSpan) }) {
+                    Box(
+                        Modifier.fillMaxWidth().padding(48.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
                         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     }
                 }
 
-                state.error != null -> item {
+                state.error != null -> item(span = { GridItemSpan(maxLineSpan) }) {
                     Column(
                         Modifier.fillMaxWidth().padding(32.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -157,9 +185,13 @@ fun PlaylistScreen(
                             textAlign = TextAlign.Center,
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = vm::refresh) { Text("重试", color = MaterialTheme.colorScheme.primary) }
+                            TextButton(onClick = vm::refresh) {
+                                Text("重试", color = MaterialTheme.colorScheme.primary)
+                            }
                             if (!loggedIn) {
-                                TextButton(onClick = onLogin) { Text("去登录", color = MaterialTheme.colorScheme.primary) }
+                                TextButton(onClick = onLogin) {
+                                    Text("去登录", color = MaterialTheme.colorScheme.primary)
+                                }
                             }
                         }
                     }
@@ -167,22 +199,41 @@ fun PlaylistScreen(
 
                 else -> {
                     if (state.folders.isNotEmpty()) {
-                        item { FolderSectionHeader("我创建的 (${state.folders.size})") }
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            SectionHeader("我创建的 (${state.folders.size})")
+                        }
                         items(state.folders, key = { "c${it.id}" }) { folder ->
-                            FolderRow(folder, onClick = { onOpenFolder(folder) }, onLongClick = {
-                                vm.deleteFolder(folder.id)
-                            })
+                            PlaylistCard(
+                                title = folder.title,
+                                cover = folder.cover,
+                                count = folder.mediaCount,
+                                isPrivate = folder.isPrivate,
+                                onOpen = { onOpenFolder(folder) },
+                                onPlay = { onPlayFolder(folder) },
+                            )
                         }
                     }
                     if (state.subscribed.isNotEmpty()) {
-                        item { FolderSectionHeader("收藏的 (${state.subscribed.size})") }
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            SectionHeader("收藏的 (${state.subscribed.size})")
+                        }
                         items(state.subscribed, key = { "s${it.id}" }) { folder ->
-                            FolderRow(folder, onClick = { onOpenFolder(folder) }, onLongClick = null)
+                            PlaylistCard(
+                                title = folder.title,
+                                cover = folder.cover,
+                                count = folder.mediaCount,
+                                isPrivate = folder.isPrivate,
+                                onOpen = { onOpenFolder(folder) },
+                                onPlay = { onPlayFolder(folder) },
+                            )
                         }
                     }
                     if (state.folders.isEmpty() && state.subscribed.isEmpty()) {
-                        item {
-                            Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Box(
+                                Modifier.fillMaxWidth().padding(48.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
                                 Text(
                                     "还没有收藏夹,点右上 + 新建",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -219,66 +270,134 @@ fun PlaylistScreen(
     }
 }
 
+/** 分区小标题(我创建的/收藏的),整行占满。 */
 @Composable
-private fun FolderSectionHeader(text: String) {
+private fun SectionHeader(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 4.dp),
+        modifier = Modifier.padding(start = 6.dp, top = 8.dp),
     )
 }
 
-// ⚠ onLongClick 参数仍未接线(沿用原「我的」页实现):要走长按删除收藏夹,
-// 需换 combinedClickable 并加确认气泡——直接删是 B 站远端的破坏性操作。
+/**
+ * 歌单网格卡片:上方正方形封面 + 下方标题。
+ * 徽标(左上)= 项数;右下黄圆播放钮 = 直接整队播放本歌单(与首页卡片播放键同款黄底)。
+ * 合集卡传 [onLongClick] 长按移除本地订阅;收藏夹卡不传(删除是 B 站远端破坏性操作,未开放)。
+ */
 @Composable
-private fun FolderRow(
-    folder: FavoriteRepository.Folder,
-    onClick: () -> Unit,
-    onLongClick: (() -> Unit)?,
+private fun PlaylistCard(
+    title: String,
+    cover: String?,
+    count: Int,
+    isPrivate: Boolean = false,
+    onOpen: () -> Unit,
+    onPlay: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
-    Row(
+    Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 2.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .clip(RoundedCornerShape(14.dp))
+            .combinedClickable(
+                onClick = onOpen,
+                onLongClick = onLongClick,
+            ),
     ) {
         Box(
             modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(14.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
         ) {
-            if (folder.cover != null) {
-                AsyncImage(folder.cover, null, Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)))
+            if (cover != null) {
+                AsyncImage(
+                    cover,
+                    null,
+                    Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
             } else {
-                Icon(Icons.Rounded.Folder, null, tint = MaterialTheme.colorScheme.primary)
-            }
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(folder.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                if (folder.isPrivate) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Icon(
-                        Icons.Filled.Lock,
-                        contentDescription = "私密",
-                        modifier = Modifier.padding(start = 4.dp).size(14.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        Icons.Rounded.Folder,
+                        null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(40.dp),
                     )
                 }
             }
+            // 左上角数字徽标(半透明黑纱胶囊,纯色扁平无阴影)
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Rounded.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(12.dp),
+                )
+                Text(
+                    formatPlaylistCount(count),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                )
+            }
+            // 右下播放钮:直接播整个歌单
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+                    .clickable(onClick = onPlay),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.PlayArrow,
+                    contentDescription = "播放整个歌单",
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.padding(start = 2.dp, top = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (isPrivate) {
+                Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = "私密",
+                    modifier = Modifier.size(12.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(3.dp))
+            }
             Text(
-                "${folder.mediaCount} 项" + (folder.ownerName?.let { " · $it" } ?: ""),
+                title,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
+}
+
+/** 徽标数字:1 万以上按「x.x万」缩写(网易云歌单卡的读法)。 */
+private fun formatPlaylistCount(count: Int): String {
+    if (count < 10000) return count.toString()
+    val dec = (count / 1000).toDouble() / 10.0
+    return if (dec % 1.0 == 0.0) "${dec.toInt()}万" else "${dec}万"
 }
 
 @Composable
@@ -320,59 +439,6 @@ private fun CreateFolderDialog(onDismiss: () -> Unit, onCreate: (String, Boolean
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
-}
-
-@Composable
-private fun CollectionRow(
-    collection: SavedCollection,
-    onClick: () -> Unit,
-    onRemove: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 2.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (collection.cover != null) {
-                AsyncImage(collection.cover, null, Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)))
-            } else {
-                Icon(Icons.Rounded.Folder, null, tint = MaterialTheme.colorScheme.primary)
-            }
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                collection.title,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                if (collection.total > 0) "合集 · 共 ${collection.total} 个视频" else "合集",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        IconButton(onClick = onRemove) {
-            Icon(
-                Icons.Rounded.Close,
-                contentDescription = "移除合集",
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
 }
 
 /**

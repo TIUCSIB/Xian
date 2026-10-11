@@ -356,6 +356,49 @@ class MainViewModel(
     /** bili:// 解析拿不到 aid;收藏前若缺失则经 view 补。 */
     private val aidCache = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
+    /**
+     * 歌单卡片右下播放钮:直接播整个歌单(取第一页内容整队入列,后续翻页不自动接)。
+     * 反馈走 queueNotice→Toast(成功不提示,迷你条封面变化本身就是反馈)。
+     */
+    fun playFolderPlaylist(folderId: Long) {
+        viewModelScope.launch {
+            try {
+                val songs = favoriteRepository.folderContents(folderId, 1).songs
+                if (songs.isEmpty()) _queueNotice.value = "这个歌单还是空的"
+                else playQueue(songs, 0)
+            } catch (e: Exception) {
+                _queueNotice.value = "歌单播放失败:${e.message}"
+            }
+        }
+    }
+
+    /** UP 主合集版:同上,走 seasons_archives_list 第一页。 */
+    fun playCollectionPlaylist(mid: Long, seasonId: Long) {
+        viewModelScope.launch {
+            try {
+                val songs = dev.avsong.data.CollectionRepository.page(mid, seasonId, 1).songs
+                if (songs.isEmpty()) _queueNotice.value = "这个合集还是空的"
+                else playQueue(songs, 0)
+            } catch (e: Exception) {
+                _queueNotice.value = "合集播放失败:${e.message}"
+            }
+        }
+    }
+
+    /** 「下一首播放」(列表行长按):插到当前曲后面,不打断播放、不动现有队列。 */
+    fun playNext(song: Song) {
+        if (song.aid > 0) aidCache[song.bvid] = song.aid
+        playerController.playNext(song.toMediaItem())
+        _queueNotice.value = "已插入下一首播放"
+    }
+
+    /** 「加入队列」(列表行长按):追加到队尾,不改动播放位置。 */
+    fun addToQueue(song: Song) {
+        if (song.aid > 0) aidCache[song.bvid] = song.aid
+        playerController.addToQueue(song.toMediaItem())
+        _queueNotice.value = "已加入队列"
+    }
+
     suspend fun aidFor(bvid: String): Long =
         aidCache[bvid] ?: favoriteRepository.fetchAid(bvid).also { aidCache[bvid] = it }
 
@@ -397,6 +440,13 @@ class MainViewModel(
     val downloadMessage: StateFlow<String?> = _downloadMessage.asStateFlow()
     fun consumeDownloadMessage() {
         _downloadMessage.value = null
+    }
+
+    /** 队列插入反馈(下一首播放/加入队列),消费式一次性消息,UI 侧用 Toast 展示。 */
+    private val _queueNotice = MutableStateFlow<String?>(null)
+    val queueNotice: StateFlow<String?> = _queueNotice.asStateFlow()
+    fun consumeQueueNotice() {
+        _queueNotice.value = null
     }
 
     /** 下载当前播放歌曲:解析直链 → BiliHttp(自带 Referer)→ 存到 app 外部 Music 目录。 */

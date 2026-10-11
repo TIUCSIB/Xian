@@ -7,8 +7,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,12 +31,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.rounded.PlaylistAdd
+import androidx.compose.material.icons.rounded.Queue
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,6 +97,9 @@ fun SongList(
     /** 当前播放曲的 mediaId:命中行的歌名高亮 + 播放中封面盖音波条徽章。 */
     currentMediaId: String? = null,
     isPlaying: Boolean = false,
+    /** 非空时长按行弹「下一首播放/加入队列」菜单(不换队列);不传则无长按。 */
+    onPlayNext: ((Song) -> Unit)? = null,
+    onAddToQueue: ((Song) -> Unit)? = null,
     hasMore: Boolean = false,
     loadingMore: Boolean = false,
     onLoadMore: () -> Unit = {},
@@ -111,6 +123,8 @@ fun SongList(
                 isCurrent = song.mediaId == currentMediaId,
                 isPlaying = isPlaying,
                 onClick = { onPlay(songs, index) },
+                onPlayNext = onPlayNext,
+                onAddToQueue = onAddToQueue,
             )
         }
         if (loadingMore) {
@@ -126,6 +140,7 @@ fun SongList(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SongRow(
     song: Song,
@@ -134,13 +149,22 @@ fun SongRow(
     showPlayButton: Boolean = true,
     isCurrent: Boolean = false,
     isPlaying: Boolean = false,
+    onPlayNext: ((Song) -> Unit)? = null,
+    onAddToQueue: ((Song) -> Unit)? = null,
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 10.dp, vertical = 2.dp)
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                // 点歌=换队是默认逻辑;长按是无损插入入口(与主流音乐软件的行内菜单一致)
+                onLongClick = if (onPlayNext != null || onAddToQueue != null) {
+                    { menuExpanded = true }
+                } else null,
+            )
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -220,6 +244,33 @@ fun SongRow(
                     else MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(22.dp),
                 )
+            }
+        }
+        if (menuExpanded) {
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false },
+            ) {
+                onPlayNext?.let { action ->
+                    DropdownMenuItem(
+                        text = { Text("下一首播放") },
+                        leadingIcon = { Icon(Icons.Rounded.Queue, null) },
+                        onClick = {
+                            menuExpanded = false
+                            action(song)
+                        },
+                    )
+                }
+                onAddToQueue?.let { action ->
+                    DropdownMenuItem(
+                        text = { Text("加入队列") },
+                        leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, null) },
+                        onClick = {
+                            menuExpanded = false
+                            action(song)
+                        },
+                    )
+                }
             }
         }
     }

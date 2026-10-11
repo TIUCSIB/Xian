@@ -112,6 +112,25 @@ class PlayerController(private val context: Context) {
     }
 
     /**
+     * 「下一首播放」:插到当前曲后面,不打断播放、不动队列其余部分。
+     * 队列为空时退化为单曲入列起播(与 playFromHistory 空队分支一致)。
+     */
+    fun playNext(item: MediaItem) = withController { ctrl ->
+        if (ctrl.mediaItemCount == 0) {
+            ctrl.setMediaItems(listOf(item), 0, 0L)
+            ctrl.prepare()
+            ctrl.play()
+        } else {
+            ctrl.addMediaItem(ctrl.currentMediaItemIndex + 1, item)
+        }
+    }
+
+    /** 「加入队列」:追加到队尾,不改动播放位置。 */
+    fun addToQueue(item: MediaItem) = withController { ctrl ->
+        ctrl.addMediaItem(ctrl.mediaItemCount, item)
+    }
+
+    /**
      * 历史回放:曲子已在队列则跳播(不重复入列);队列空则单曲入列;
      * 否则追加到队尾起播 —— 不打乱现有队列。
      */
