@@ -409,6 +409,12 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         folderTitle = title,
                         onBack = { navController.popBackStack() },
                         onPlay = { songs, index -> viewModel.playQueue(songs, index) },
+                        onShuffle = { songs -> viewModel.playQueueShuffled(songs) },
+                        onPlayNext = viewModel::playNext,
+                        onAddToQueue = viewModel::addToQueue,
+                        onDownload = { song -> viewModel.downloadSong(appContext, song) },
+                        currentMediaId = state.player.currentMediaId,
+                        isPlaying = state.player.isPlaying,
                     )
                 }
                 composable(Routes.COLLECTION) { entry ->
@@ -421,6 +427,12 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         fallbackTitle = title,
                         onBack = { navController.popBackStack() },
                         onPlay = { songs, index -> viewModel.playQueue(songs, index) },
+                        onShuffle = { songs -> viewModel.playQueueShuffled(songs) },
+                        onPlayNext = viewModel::playNext,
+                        onAddToQueue = viewModel::addToQueue,
+                        onDownload = { song -> viewModel.downloadSong(appContext, song) },
+                        currentMediaId = state.player.currentMediaId,
+                        isPlaying = state.player.isPlaying,
                     )
                 }
             }

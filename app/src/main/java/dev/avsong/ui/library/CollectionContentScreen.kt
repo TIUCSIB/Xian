@@ -21,6 +21,7 @@ fun CollectionContentScreen(
     onShuffle: (List<Song>) -> Unit,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
+    onDownload: (Song) -> Unit,
     currentMediaId: String?,
     isPlaying: Boolean,
 ) {
@@ -46,6 +47,7 @@ fun CollectionContentScreen(
         isPlaying = isPlaying,
         onPlayNext = onPlayNext,
         onAddToQueue = onAddToQueue,
+        onDownload = onDownload,
         onRemoveSong = null,
     )
 }

@@ -20,6 +20,7 @@ fun FolderContentScreen(
     onShuffle: (List<Song>) -> Unit,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
+    onDownload: (Song) -> Unit,
     currentMediaId: String?,
     isPlaying: Boolean,
 ) {
@@ -45,6 +46,7 @@ fun FolderContentScreen(
         isPlaying = isPlaying,
         onPlayNext = onPlayNext,
         onAddToQueue = onAddToQueue,
+        onDownload = onDownload,
         onRemoveSong = { vm.removeFromFolder(it) },
     )
 }

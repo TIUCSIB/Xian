@@ -60,7 +60,7 @@ import dev.avsong.ui.common.PlayingEqualizer
  * 歌单详情页共享布局(收藏夹内容页 / 合集内容页 2026-10-11 起共用,参考网易云式详情稿):
  * 顶栏裸返回键;头部 = 大方封面 + 元信息/大标题/UP 名;「播放/随机播放」双胶囊钮(黑黄适配:
  * 主操作黄色实心、随机深灰);曲目行 = 序号(当前曲换成音波条 + 灰底圆角垫)+ 标题 + UP·时长,
- * 行尾「⋯」菜单 = 下一首播放 / 加入队列 / 移出收藏夹([onRemoveSong] 非空时,收藏夹专属)。
+ * 行尾「⋯」菜单 = 下一首播放 / 加入队列 / 下载 / 移出收藏夹([onRemoveSong] 非空时,收藏夹专属)。
  * 随内容滚动,顶栏只有返回键。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -84,6 +84,7 @@ fun PlaylistDetailContent(
     isPlaying: Boolean,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
+    onDownload: (Song) -> Unit,
     onRemoveSong: ((Song) -> Unit)? = null,
 ) {
     Scaffold(
@@ -149,6 +150,7 @@ fun PlaylistDetailContent(
                             onClick = { onPlay(songs, index) },
                             onPlayNext = onPlayNext,
                             onAddToQueue = onAddToQueue,
+                            onDownload = onDownload,
                             onRemove = onRemoveSong,
                         )
                     }
@@ -306,6 +308,7 @@ private fun NumberedSongRow(
     onClick: () -> Unit,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
+    onDownload: (Song) -> Unit,
     onRemove: ((Song) -> Unit)?,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -381,6 +384,13 @@ private fun NumberedSongRow(
                     text = { Text("加入队列") },
                     onClick = {
                         onAddToQueue(song)
+                        menuExpanded = false
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("下载") },
+                    onClick = {
+                        onDownload(song)
                         menuExpanded = false
                     },
                 )

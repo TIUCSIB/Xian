@@ -462,10 +462,23 @@ class MainViewModel(
     }
 
     /** 下载当前播放歌曲:解析直链 → BiliHttp(自带 Referer)→ 存到 app 外部 Music 目录。 */
+    /** 队列抽屉下载钮:下载当前播放曲。 */
     fun downloadCurrentSong(context: Context) {
         val ps = _state.value.player
         val bvid = ps.currentMediaId ?: return
-        val title = ps.title.orEmpty().ifBlank { "audio" }
+        downloadSong(context, bvid, ps.title.orEmpty().ifBlank { "audio" })
+    }
+
+    /** 歌单详情行菜单「下载」:任意歌曲,不必在播放队列里。 */
+    fun downloadSong(context: Context, song: Song) {
+        downloadSong(context, song.bvid, song.title.ifBlank { "audio" })
+    }
+
+    /**
+     * 下载核心:直链现取(绝不缓存,~3h 过期)→ BiliHttp(自带 Referer)流式存 MUSIC 目录。
+     * 反馈走 downloadMessage→Toast(抽屉等独立窗口会盖住 Snackbar)。
+     */
+    private fun downloadSong(context: Context, bvid: String, title: String) {
         viewModelScope.launch(Dispatchers.IO) {
             _downloadMessage.value = "开始下载:$title"
             try {

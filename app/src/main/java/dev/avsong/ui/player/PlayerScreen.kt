@@ -176,7 +176,7 @@ fun PlayerScreen(
                 Box(
                     Modifier
                         .matchParentSize()
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f)),
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f)),
                 )
                 Column(
                     modifier = Modifier
@@ -252,7 +252,7 @@ fun PlayerScreen(
                 Box(
                     Modifier
                         .matchParentSize()
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f)),
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f)),
                 )
                 Row(
                     modifier = Modifier
