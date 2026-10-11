@@ -46,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -283,7 +284,8 @@ private fun SectionHeader(text: String) {
 
 /**
  * 歌单网格卡片:上方正方形封面 + 下方标题。
- * 徽标(左上)= 项数;右下黄圆播放钮 = 直接整队播放本歌单(与首页卡片播放键同款黄底)。
+ * 封面底部有向上渐变的黑纱遮罩,右下角裸白色播放图标(无底色)直接播整个歌单。
+ * 徽标(左上)= 项数。
  * 合集卡传 [onLongClick] 长按移除本地订阅;收藏夹卡不传(删除是 B 站远端破坏性操作,未开放)。
  */
 @Composable
@@ -328,6 +330,17 @@ private fun PlaylistCard(
                     )
                 }
             }
+            // 底部往上渐变的黑纱遮罩:托住右下角白色播放图标(用户要求的例外,全局禁渐变不含此处)
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0.45f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = 0.55f),
+                        ),
+                    ),
+            )
             // 左上角数字徽标(半透明黑纱胶囊,纯色扁平无阴影)
             Row(
                 modifier = Modifier
@@ -350,22 +363,22 @@ private fun PlaylistCard(
                     color = Color.White,
                 )
             }
-            // 右下播放钮:直接播整个歌单
+            // 右下播放钮:裸白色图标(无底色),对比度靠底部渐变遮罩;
+            // clip 圆形必须保留——没有它 clickable 的涟漪会画成方形
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(8.dp)
-                    .size(36.dp)
+                    .padding(end = 6.dp, bottom = 2.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
                     .clickable(onClick = onPlay),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     Icons.Rounded.PlayArrow,
                     contentDescription = "播放整个歌单",
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(22.dp),
+                    tint = Color.White,
+                    modifier = Modifier.size(30.dp),
                 )
             }
         }

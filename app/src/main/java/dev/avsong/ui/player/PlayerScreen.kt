@@ -54,6 +54,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
@@ -164,7 +165,7 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(cardShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.55f))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f))
                     .clickable { showLyric = !showLyric }
                     .padding(horizontal = 20.dp, vertical = 18.dp),
             ) {
@@ -225,13 +226,15 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(cardShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.55f))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f))
                     .padding(horizontal = 18.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
+                // 裸图标统一白色(无圆底后不注入会继承到黑色)
+                CompositionLocalProvider(LocalContentColor provides Color.White) {
                 // 播放模式键:单击循环切换(列表循环→单曲循环→随机→顺序),图标随模式变
-                CircleButton(onClick = onCycleMode, size = 44) {
+                IconButton(onClick = onCycleMode, modifier = Modifier.size(44.dp)) {
                     val (modeIcon, modeDesc) = when {
                         state.shuffleEnabled -> Icons.Rounded.Shuffle to "随机播放"
                         state.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE ->
@@ -241,18 +244,18 @@ fun PlayerScreen(
                     Icon(
                         modeIcon,
                         contentDescription = modeDesc,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(24.dp),
                         tint = if (state.shuffleEnabled ||
                             state.repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF)
                             MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                CircleButton(onClick = onPrevious, size = 48) {
+                IconButton(onClick = onPrevious, modifier = Modifier.size(48.dp)) {
                     Icon(
                         Icons.Rounded.SkipPrevious,
                         contentDescription = "上一首",
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.size(26.dp),
                     )
                 }
                 // 播放/暂停:柠檬黄实心圆(onPrimary=近黑图标)
@@ -272,44 +275,25 @@ fun PlayerScreen(
                         )
                     }
                 }
-                CircleButton(onClick = onNext, size = 48) {
+                IconButton(onClick = onNext, modifier = Modifier.size(48.dp)) {
                     Icon(
                         Icons.Rounded.SkipNext,
                         contentDescription = "下一首",
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.size(26.dp),
                     )
                 }
-                // 右端 = 播放队列抽屉(与迷你条同款;循环键已并入左侧模式键)
-                CircleButton(onClick = onQueue, size = 44) {
+                IconButton(onClick = onQueue, modifier = Modifier.size(44.dp)) {
                     Icon(
                         Icons.AutoMirrored.Rounded.PlaylistPlay,
                         contentDescription = "播放队列",
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(24.dp),
                     )
+                }
                 }
             }
 
             Spacer(Modifier.height(16.dp))
         }
-    }
-}
-
-/** 圆形控制键:近黑半透明底 + 白色图标(毛玻璃卡上保证可读)。 */
-@Composable
-private fun CircleButton(
-    onClick: () -> Unit,
-    size: Int,
-    content: @Composable () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .size(size.dp)
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.5f))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        CompositionLocalProvider(LocalContentColor provides Color.White) { content() }
     }
 }
 
@@ -357,13 +341,25 @@ private fun WaveformSeekBar(
     ) {
         val gap = 2.dp.toPx()
         val barW = (size.width - gap * (barCount - 1)) / barCount
+        // 全量未播灰条
         bars.forEachIndexed { i, h ->
             drawRoundRect(
-                color = if ((i + 0.5f) / barCount <= fraction) playedColor else unplayedColor,
+                color = unplayedColor,
                 topLeft = Offset(x = i * (barW + gap), y = (size.height - size.height * h) / 2),
                 size = Size(width = barW, height = size.height * h),
                 cornerRadius = CornerRadius(barW / 2f),
             )
+        }
+        // 已播黄条:按播放进度像素级裁剪,边界条平滑填充(不整格跳变,用户要求)
+        clipRect(right = size.width * fraction.coerceIn(0f, 1f)) {
+            bars.forEachIndexed { i, h ->
+                drawRoundRect(
+                    color = playedColor,
+                    topLeft = Offset(x = i * (barW + gap), y = (size.height - size.height * h) / 2),
+                    size = Size(width = barW, height = size.height * h),
+                    cornerRadius = CornerRadius(barW / 2f),
+                )
+            }
         }
     }
 }
