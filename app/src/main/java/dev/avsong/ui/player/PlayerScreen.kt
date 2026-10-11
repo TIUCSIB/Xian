@@ -17,17 +17,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
-import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -65,10 +66,9 @@ import kotlin.math.roundToLong
 fun PlayerScreen(
     state: PlayerState,
     lyric: LyricUiState,
-    onBack: () -> Unit,
+    onCollapse: () -> Unit,
     onQueue: () -> Unit,
     onFavorite: () -> Unit,
-    onAddToQueue: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
@@ -107,48 +107,37 @@ fun PlayerScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .navigationBarsPadding()
                 .padding(horizontal = 16.dp),
         ) {
-            // 顶栏:返回 / 标题 / 队列
+            // 顶栏:收起箭头 / 标题 / 收藏(裸图标无圆形背景,用户要求)
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(top = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                CircleButton(onClick = onBack, size = 44) {
+                IconButton(onClick = onCollapse, modifier = Modifier.size(44.dp)) {
                     Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "返回",
-                        modifier = Modifier.size(22.dp),
+                        Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = "收起",
+                        modifier = Modifier.size(28.dp),
+                        tint = MaterialTheme.colorScheme.onBackground,
                     )
                 }
-                Spacer(Modifier.width(12.dp))
                 Text(
                     if (showLyric) "歌词" else "正在播放",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.weight(1f),
                 )
-                CircleButton(onClick = onFavorite, size = 44) {
+                IconButton(onClick = onFavorite, modifier = Modifier.size(44.dp)) {
                     Icon(
-                        Icons.Rounded.StarBorder,
+                        Icons.Rounded.FavoriteBorder,
                         contentDescription = "收藏",
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                CircleButton(onClick = onAddToQueue, size = 44) {
-                    Icon(
-                        Icons.Rounded.PlaylistAdd,
-                        contentDescription = "加入歌单",
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                CircleButton(onClick = onQueue, size = 44) {
-                    Icon(
-                        Icons.AutoMirrored.Rounded.PlaylistPlay,
-                        contentDescription = "播放队列",
-                        modifier = Modifier.size(22.dp),
+                        modifier = Modifier.size(24.dp),
+                        tint = MaterialTheme.colorScheme.onBackground,
                     )
                 }
             }

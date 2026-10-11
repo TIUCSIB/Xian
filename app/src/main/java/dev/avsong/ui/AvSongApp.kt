@@ -87,7 +87,6 @@ object Routes {
     const val SEARCH = "search"
     const val PLAYLIST = "playlist"
     const val MINE = "mine"
-    const val PLAYER = "player"
     const val LOGIN = "login"
     const val FOLDER = "library/folder/{folderId}?title={title}"
     const val COLLECTION = "library/collection/{mid}/{seasonId}?title={title}"
@@ -108,13 +107,14 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
     val state by viewModel.state.collectAsState()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-    val onPlayerScreen = currentRoute == Routes.PLAYER
     val currentTab = routeToTab(currentRoute)
 
     val snackbarHostState = remember { SnackbarHostState() }
     var showFavoritePicker by remember { mutableStateOf(false) }
     // 迷你条的队列入口:底部抽屉(不再跳队列页;Routes.QUEUE 仅播放页右上入口在用)
     var showQueueSheet by remember { mutableStateOf(false) }
+    // 播放详情:与队列抽屉同款的底部上滑面板(非导航页,用户要求)
+    var showPlayerSheet by remember { mutableStateOf(false) }
     // 抽屉内双 tab:0=当前播放 1=历史播放(打开时保持上次选中的 tab)
     var queueTab by remember { mutableStateOf(0) }
     val playHistory by viewModel.playHistory.collectAsState()
@@ -147,6 +147,32 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                 favRepo = viewModel.favoriteRepository,
                 bvid = bvid,
                 onDismiss = { showFavoritePicker = false },
+            )
+        }
+    }
+
+    // 播放详情抽屉:全屏上滑面板,containerColor 透明显出自带封面背景;
+    // dragHandle=null(顶栏自带上收起箭头),下拉或箭头均可收起
+    if (showPlayerSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showPlayerSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = Color.Transparent,
+            tonalElevation = 0.dp,
+            dragHandle = null,
+        ) {
+            PlayerScreen(
+                state = state.player,
+                lyric = state.lyric,
+                onCollapse = { showPlayerSheet = false },
+                onQueue = { showQueueSheet = true },
+                onFavorite = { showFavoritePicker = true },
+                onPlayPause = viewModel::playPause,
+                onCycleMode = viewModel::cyclePlayMode,
+                onNext = viewModel::next,
+                onPrevious = viewModel::previous,
+                onSeek = viewModel::seekTo,
+                positionProvider = viewModel::currentPosition,
             )
         }
     }
@@ -296,7 +322,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
         bottomBar = {
             // 迷你条与 tab 栏熔接为一个圆角容器:迷你条出上圆角、tab 出下圆角,
             // 中缝零间距贴合;二者单独出现时各自保持全圆角。播放页两者都隐藏。
-            val showMini = state.player.currentMediaId != null && !onPlayerScreen
+            val showMini = state.player.currentMediaId != null
             val showTabs = currentTab != null
             Column {
                 if (showMini) {
@@ -304,7 +330,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         state = state.player,
                         onPlayPause = viewModel::playPause,
                         onQueue = { showQueueSheet = true },
-                        onClick = { navController.navigate(Routes.PLAYER) },
+                        onClick = { showPlayerSheet = true },
                         shape = if (showTabs) RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
                         else RoundedCornerShape(50),
                         outerPadding = if (showTabs) PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp)
@@ -401,22 +427,6 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         fallbackTitle = title,
                         onBack = { navController.popBackStack() },
                         onPlay = { songs, index -> viewModel.playQueue(songs, index) },
-                    )
-                }
-                composable(Routes.PLAYER) {
-                    PlayerScreen(
-                        state = state.player,
-                        lyric = state.lyric,
-                        onBack = { navController.popBackStack() },
-                        onQueue = { showQueueSheet = true },
-                        onFavorite = { showFavoritePicker = true },
-                        onAddToQueue = viewModel::addCurrentToQueue,
-                        onPlayPause = viewModel::playPause,
-                        onCycleMode = viewModel::cyclePlayMode,
-                        onNext = viewModel::next,
-                        onPrevious = viewModel::previous,
-                        onSeek = viewModel::seekTo,
-                        positionProvider = viewModel::currentPosition,
                     )
                 }
             }
