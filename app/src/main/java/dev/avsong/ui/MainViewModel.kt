@@ -1,18 +1,24 @@
 package dev.avsong.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.MediaMetadata
 import dev.avsong.data.lyric.LyricLine
 import dev.avsong.data.lyric.LyricRepository
 import dev.avsong.domain.NotLoggedInException
 import dev.avsong.domain.Song
 import dev.avsong.domain.SongRepository
+import dev.avsong.data.BiliSongRepository
 import dev.avsong.player.PlayerController
 import dev.avsong.player.PlayerState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import dev.avsong.data.BiliConstants
+import dev.avsong.data.BiliHttp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -358,6 +364,45 @@ class MainViewModel(
 
     /** 历史回放:在队列则跳播,否则追加队尾起播(不打乱现有队列)。 */
     fun playFromHistory(song: Song) = playerController.playFromHistory(song.toMediaItem())
+
+    /** 播放模式三态(循环/单曲/随机),抽屉模式条直选。 */
+    fun setRepeatMode(mode: Int) = playerController.setRepeatMode(mode)
+    fun setShuffleMode(enabled: Boolean) = playerController.setShuffle(enabled)
+    fun clearQueue() = playerController.clearQueue()
+
+    /** 下载反馈走 Toast(抽屉是独立窗口,Snackbar 会被盖住)。 */
+    private val _downloadMessage = MutableStateFlow<String?>(null)
+    val downloadMessage: StateFlow<String?> = _downloadMessage.asStateFlow()
+    fun consumeDownloadMessage() {
+        _downloadMessage.value = null
+    }
+
+    /** 下载当前播放歌曲:解析直链 → BiliHttp(自带 Referer)→ 存到 app 外部 Music 目录。 */
+    fun downloadCurrentSong(context: Context) {
+        val ps = _state.value.player
+        val bvid = ps.currentMediaId ?: return
+        val title = ps.title.orEmpty().ifBlank { "audio" }
+        viewModelScope.launch(Dispatchers.IO) {
+            _downloadMessage.value = "开始下载:$title"
+            try {
+                val url = BiliSongRepository.audioUrlBlocking(bvid)
+                val request = okhttp3.Request.Builder().url(url).build()
+                BiliHttp.client.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code}")
+                    val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC)
+                        ?: throw java.io.IOException("外部存储不可用")
+                    val safe = title.replace(Regex("""[\/:*?"<>|]"""), "_").take(80)
+                    val file = java.io.File(dir, "$safe.m4a")
+                    resp.body?.byteStream()?.use { input ->
+                        file.outputStream().use { output -> input.copyTo(output) }
+                    } ?: throw java.io.IOException("空响应体")
+                }
+                _downloadMessage.value = "下载完成:$title"
+            } catch (e: Exception) {
+                _downloadMessage.value = "下载失败:${e.message}"
+            }
+        }
+    }
     fun removeFromQueue(index: Int) = playerController.removeAt(index)
     fun moveInQueue(from: Int, to: Int) = playerController.moveItem(from, to)
 

@@ -15,10 +15,18 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -40,11 +48,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
+import androidx.media3.common.Player
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -117,6 +129,16 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
         if (result == SnackbarResult.ActionPerformed) viewModel.retryPlayback()
     }
 
+    // 下载反馈:Toast(系统窗口,盖在抽屉上面;Snackbar 会被抽屉窗口挡住)
+    val downloadMsg by viewModel.downloadMessage.collectAsState()
+    val appContext = LocalContext.current.applicationContext
+    LaunchedEffect(downloadMsg) {
+        downloadMsg?.let {
+            Toast.makeText(appContext, it, Toast.LENGTH_SHORT).show()
+            viewModel.consumeDownloadMessage()
+        }
+    }
+
     if (showFavoritePicker) {
         val bvid = state.player.currentMediaId ?: ""
         if (bvid.isNotBlank()) {
@@ -157,6 +179,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         .fillMaxWidth()
                         .padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     DrawerTab(
                         text = "当前播放",
@@ -171,21 +194,58 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                     )
                 }
                 when (queueTab) {
-                    0 -> QueueContent(
-                    queue = state.player.queue,
-                    currentIndex = state.player.currentIndex,
-                    onPlayAt = { index ->
-                        // 点其他歌:直接切过去播;点当前曲:什么都不做。
-                        // 抽屉保持打开,由用户手动下滑关闭(用户要求)
-                        if (index != state.player.currentIndex) viewModel.playAt(index)
-                    },
-                    onRemoveAt = viewModel::removeFromQueue,
-                    onMove = viewModel::moveInQueue,
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    isPlaying = state.player.isPlaying,
-                    showReorder = false,
-                    listState = queueListState,
-                    )
+                    0 -> {
+                        // 功能条:模式三选(循环/单曲/随机)+ 下载/收藏/清空
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 24.dp, end = 16.dp, bottom = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ModeChip("循环", Icons.Rounded.Repeat,
+                                active = state.player.repeatMode == Player.REPEAT_MODE_ALL &&
+                                    !state.player.shuffleEnabled) {
+                                viewModel.setRepeatMode(Player.REPEAT_MODE_ALL)
+                                viewModel.setShuffleMode(false)
+                            }
+                            ModeChip("单曲", Icons.Rounded.RepeatOne,
+                                active = state.player.repeatMode == Player.REPEAT_MODE_ONE &&
+                                    !state.player.shuffleEnabled) {
+                                viewModel.setRepeatMode(Player.REPEAT_MODE_ONE)
+                                viewModel.setShuffleMode(false)
+                            }
+                            ModeChip("随机", Icons.Rounded.Shuffle,
+                                active = state.player.shuffleEnabled) {
+                                viewModel.setShuffleMode(true)
+                            }
+                            Spacer(Modifier.weight(1f))
+                            BarAction(Icons.Rounded.Download, "下载当前歌曲") {
+                                viewModel.downloadCurrentSong(appContext)
+                            }
+                            BarAction(Icons.Rounded.FavoriteBorder, "收藏当前歌曲") {
+                                if (state.player.currentMediaId != null) showFavoritePicker = true
+                            }
+                            BarAction(Icons.Rounded.DeleteSweep, "清空播放队列") {
+                                viewModel.clearQueue()
+                            }
+                        }
+                        QueueContent(
+                            queue = state.player.queue,
+                            currentIndex = state.player.currentIndex,
+                            onPlayAt = { index ->
+                                // 点其他歌:直接切过去播;点当前曲:什么都不做。
+                                // 抽屉保持打开,由用户手动下滑关闭(用户要求)
+                                if (index != state.player.currentIndex) viewModel.playAt(index)
+                            },
+                            onRemoveAt = viewModel::removeFromQueue,
+                            onMove = viewModel::moveInQueue,
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            isPlaying = state.player.isPlaying,
+                            showReorder = false,
+                            listState = queueListState,
+                        )
+                    }
                     1 -> if (playHistory.isEmpty()) {
                         Box(
                             Modifier.fillMaxWidth().weight(1f),
@@ -372,33 +432,106 @@ private fun DrawerTab(
                 onClick = onClick,
             )
             .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.Top,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            color = if (selected) MaterialTheme.colorScheme.onSurface
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (badge != null) {
-            Box(
-                Modifier
-                    .padding(start = 3.dp)
-                    .offset(y = (-4).dp)
-                    .widthIn(min = 16.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
-                    .padding(horizontal = 3.dp, vertical = 1.dp),
-                contentAlignment = Alignment.Center,
-            ) {
+        if (badge == null) {
+            Text(
+                text,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = if (selected) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            // 徽标钉在文字右上角:Box 只包文字本身,与相邻 tab 的文字天然同轴
+            Box {
                 Text(
-                    "$badge",
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimary,
+                    text,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (selected) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 2.dp, y = (-5).dp)
+                        .widthIn(min = 16.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 3.dp, vertical = 1.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "$badge",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
             }
         }
+    }
+}
+
+/** 抽屉功能条的模式胶囊:选中黄底黑字,未选透明灰字(纯色扁平)。 */
+@Composable
+private fun ModeChip(
+    text: String,
+    icon: ImageVector,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (active) MaterialTheme.colorScheme.primary else Color.Transparent,
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            contentDescription = text,
+            modifier = Modifier.size(14.dp),
+            tint = if (active) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(3.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (active) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** 抽屉功能条的圆形动作钮(下载/收藏/清空)。 */
+@Composable
+private fun BarAction(
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = description,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

@@ -139,6 +139,13 @@ class PlayerController(private val context: Context) {
 
     fun toggleShuffle() = withController { it.shuffleModeEnabled = !it.shuffleModeEnabled }
 
+    /** 抽屉模式条的三态显式设置(循环/单曲/随机),不走 toggle。 */
+    fun setRepeatMode(mode: Int) = withController { it.repeatMode = mode }
+    fun setShuffle(enabled: Boolean) = withController { it.shuffleModeEnabled = enabled }
+
+    /** 一键清空播放队列:同时停止播放(mini 条随 currentMediaId 置空消失)。 */
+    fun clearQueue() = withController { it.clearMediaItems() }
+
     fun cycleRepeatMode() = withController { ctrl ->
         ctrl.repeatMode = when (ctrl.repeatMode) {
             Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
