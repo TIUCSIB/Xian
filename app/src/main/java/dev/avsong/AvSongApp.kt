@@ -1,0 +1,76 @@
+package dev.avsong
+
+import android.app.Application
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
+import coil3.request.crossfade
+import okio.Path.Companion.toOkioPath
+import dev.avsong.data.BiliHttp
+import dev.avsong.data.BiliSongRepository
+import dev.avsong.data.CollectionStore
+import dev.avsong.data.FavoriteRepository
+import dev.avsong.data.SearchHistoryStore
+import dev.avsong.data.auth.AuthStore
+import dev.avsong.player.PlayerController
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+
+class AvSongApp : Application(), SingletonImageLoader.Factory {
+
+    /** 应用级协程作用域(Application 无 lifecycleScope,进程存活即作用域存活)。 */
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    lateinit var playerController: PlayerController
+        private set
+
+    lateinit var authStore: AuthStore
+        private set
+
+    lateinit var favoriteRepository: FavoriteRepository
+        private set
+
+    lateinit var searchHistoryStore: SearchHistoryStore
+        private set
+
+    lateinit var collectionStore: CollectionStore
+        private set
+
+    /** 真实 B 站数据源(匿名单例,UI 与 ExoPlayer resolver 共用)。 */
+    val songRepository: BiliSongRepository get() = BiliSongRepository
+
+    override fun onCreate() {
+        super.onCreate()
+        playerController = PlayerController(this)
+        authStore = AuthStore(this)
+        favoriteRepository = FavoriteRepository(authStore)
+        searchHistoryStore = SearchHistoryStore(this)
+        collectionStore = CollectionStore(this)
+
+        // 登录态 → OkHttp 拦截器的 Cookie 注入点(含启动时的持久化恢复)
+        appScope.launch {
+            authStore.load()
+            authStore.state.collect { BiliHttp.authCookie = it.cookieHeader() }
+        }
+        // 已保存合集(UP 主合集=歌单)的本地持久化恢复
+        appScope.launch { collectionStore.load() }
+    }
+
+    /**
+     * Coil 单例 ImageLoader:封面磁盘缓存(cacheDir/image_cache,上限约 2% 可用空间)。
+     * App 重启/滚动回列表时封面秒开,不再重复走网络。
+     * (crossfade 淡入需额外 coil-transition artifact,暂不引入)
+     */
+    override fun newImageLoader(context: PlatformContext): ImageLoader =
+        ImageLoader.Builder(this)
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache").toOkioPath())
+                    .maxSizePercent(0.02)
+                    .build()
+            }
+            .build()
+}

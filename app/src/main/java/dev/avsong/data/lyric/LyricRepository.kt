@@ -1,0 +1,280 @@
+package dev.avsong.data.lyric
+
+import dev.avsong.data.BiliConstants
+import dev.avsong.data.BiliHttp
+import dev.avsong.data.remote.PlayerV2Response
+import dev.avsong.data.remote.SubtitleBody
+import dev.avsong.data.remote.ViewResponse
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import okhttp3.Request
+import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * 歌词多源(借鉴 BiliTune):
+ * 1. B 站视频字幕(/x/player/v2 → subtitle_url;登录 Cookie 已在 BiliHttp)——翻唱/搬运最准
+ * 2. bgm_info 元数据(视频自带 BGM 标题/歌手)增强第三方搜索
+ * 3. 网易云公开接口:多候选查询(清洗标题 × 歌手变体)+ 时长校验,取第一个靠谱结果
+ *
+ * 结果按 bvid 缓存(含"无歌词"负缓存)。
+ */
+class LyricRepository {
+
+    // ---------- 网易云 DTO ----------
+
+    @Serializable
+    private data class NeteaseSearchResponse(val result: NeteaseResult? = null)
+
+    @Serializable
+    private data class NeteaseResult(val songs: List<NeteaseSong> = emptyList())
+
+    @Serializable
+    private data class NeteaseSong(
+        val id: Long = 0,
+        val duration: Long = 0, // ms
+    )
+
+    @Serializable
+    private data class NeteaseLyricResponse(
+        val lrc: NeteaseLrc? = null,
+        val tlyric: NeteaseLrc? = null, // 翻译歌词(双语),常为空
+    )
+
+    @Serializable
+    private data class NeteaseLrc(val lyric: String = "")
+
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val cache = ConcurrentHashMap<String, List<LyricLine>>()
+    private val inFlight = mutableMapOf<String, Mutex>()
+    private val inFlightGuard = Mutex()
+
+    /** 返回歌词行列表;空列表 = 无歌词(含负缓存)。 */
+    suspend fun fetch(bvid: String, title: String, artist: String, durationSec: Long = 0): List<LyricLine> {
+        cache[bvid]?.let { return it }
+        val mutex = inFlightGuard.withLock { inFlight.getOrPut(bvid) { Mutex() } }
+        return mutex.withLock {
+            try {
+                cache[bvid]?.let { return@withLock it }
+                val lines = withContext(Dispatchers.IO) { loadBlocking(bvid, title, artist, durationSec) }
+                cache[bvid] = lines
+                lines
+            } finally {
+                inFlightGuard.withLock { inFlight.remove(bvid) }
+            }
+        }
+    }
+
+    private fun loadBlocking(bvid: String, title: String, artist: String, durationSec: Long): List<LyricLine> {
+        // 上下文只取一次:view(cid)+ player/v2(subtitles + bgm_info)
+        val ctx = runCatching { biliContext(bvid) }.getOrNull()
+
+        // 源 1:B 站字幕
+        ctx?.let { c ->
+            c.subtitleLines.takeIf { it.isNotEmpty() }?.let { return it }
+        }
+
+        // 源 2:网易云,多候选(bgm 标题优先,其次清洗标题 × 歌手变体),带时长校验
+        val candidates = buildQueries(title, artist, ctx?.bgmTitle, ctx?.bgmSinger)
+        for (q in candidates) {
+            val song = neteaseSearch(q).firstOrNull { s ->
+                durationSec <= 0 || kotlin.math.abs(s.duration / 1000 - durationSec) <= 15
+            } ?: continue
+            val (lrc, tlyric) = neteaseLyric(song.id) ?: continue
+            val lines = parseLrc(lrc)
+            if (lines.isEmpty()) continue
+            // 有翻译则按时间戳近似对齐合并(网易云 tlyric 时间轴常与原文错位)
+            return if (tlyric != null) mergeTranslation(lines, parseLrc(tlyric)) else lines
+        }
+        return emptyList()
+    }
+
+    // ---------- B 站上下文 ----------
+
+    private data class BiliContext(
+        val subtitleLines: List<LyricLine>,
+        val bgmTitle: String?,
+        val bgmSinger: String?,
+    )
+
+    private fun biliContext(bvid: String): BiliContext {
+        val viewBody = get(
+            "${BiliConstants.HOST_API}/x/web-interface/view?bvid=$bvid",
+            referer = "https://www.bilibili.com/video/$bvid",
+            client = BiliHttp.client,
+        )
+        val view = json.decodeFromString<ViewResponse>(viewBody).data ?: return BiliContext(emptyList(), null, null)
+        val cid = view.cid.takeIf { it > 0 } ?: view.pages.firstOrNull()?.cid ?: return BiliContext(emptyList(), null, null)
+
+        val pBody = get(
+            "${BiliConstants.HOST_API}/x/player/v2?bvid=$bvid&cid=$cid",
+            referer = "https://www.bilibili.com/video/$bvid",
+            client = BiliHttp.client,
+        )
+        val pdata = json.decodeFromString<PlayerV2Response>(pBody).data
+        val subs = pdata?.subtitle?.subtitles.orEmpty()
+            .filter { it.subtitleUrl.isNotBlank() }
+            .sortedBy { if (it.lan.contains("zh")) 0 else 1 }
+        val lines = subs.firstOrNull()?.let { track ->
+            fetchSubtitle(track.subtitleUrl, bvid)
+        }.orEmpty()
+
+        // "发现《XXX》" → XXX
+        val bgmTitle = pdata?.bgmInfo?.musicTitle
+            ?.let { Regex("《(.+?)》").find(it)?.groupValues?.get(1) ?: it }
+            ?.takeIf { it.isNotBlank() }
+        val bgmSinger = pdata?.bgmInfo?.musicSinger?.takeIf { it.isNotBlank() }
+
+        return BiliContext(lines, bgmTitle, bgmSinger)
+    }
+
+    private fun fetchSubtitle(url: String, bvid: String): List<LyricLine> {
+        val full = if (url.startsWith("//")) "https:$url" else url
+        return runCatching {
+            val body = get(full, referer = "https://www.bilibili.com/video/$bvid", client = BiliHttp.client)
+            json.decodeFromString<SubtitleBody>(body).body
+                .filter { it.content.isNotBlank() }
+                .map { LyricLine((it.from * 1000).toLong(), it.content.trim()) }
+        }.getOrDefault(emptyList())
+    }
+
+    // ---------- 查询构造与清洗 ----------
+
+    internal fun buildQueries(title: String, artist: String, bgmTitle: String?, bgmSinger: String?): List<String> {
+        val titles = buildList {
+            bgmTitle?.let { add(it) }
+            add(title)
+            title.cleanTitle().let { if (it != title) add(it) }
+        }.distinct()
+        val artists = buildList {
+            bgmSinger?.let { add(it) }
+            add(artist)
+            artist.substringBefore(",").trim().let { if (it != artist) add(it) }
+            add("")
+        }.distinct()
+
+        val out = ArrayList<String>(8)
+        for (t in titles) {
+            for (a in artists) {
+                val q = if (a.isBlank()) t else "$t $a"
+                if (q.isNotBlank() && q !in out) out.add(q)
+                if (out.size >= 8) return out
+            }
+        }
+        return out
+    }
+
+    /** 去【】[]前缀、去 " - xxx" / "| xxx" 尾巴。 */
+    private fun String.cleanTitle(): String =
+        replace(Regex("[【\\[(（][^】\\])）]*[】\\])）]"), "")
+            .replace(Regex("\\s*[-|——]\\s*[^-|——]*$"), "")
+            .trim()
+
+    // ---------- 网易云 ----------
+
+    private fun neteaseSearch(keyword: String): List<NeteaseSong> {
+        val url = "https://music.163.com/api/search/get/web" +
+            "?s=${java.net.URLEncoder.encode(keyword, "UTF-8")}&type=1&offset=0&limit=5"
+        return runCatching {
+            json.decodeFromString<NeteaseSearchResponse>(get(url, referer = "https://music.163.com/", client = thirdPartyClient)).result?.songs.orEmpty()
+        }.getOrDefault(emptyList())
+    }
+
+    private fun neteaseLyric(songId: Long): Pair<String, String?>? = runCatching {
+        val url = "https://music.163.com/api/song/lyric?id=$songId&lv=1&kv=1&tv=-1"
+        val resp = json.decodeFromString<NeteaseLyricResponse>(
+            get(url, referer = "https://music.163.com/", client = thirdPartyClient),
+        )
+        val main = resp.lrc?.lyric.orEmpty()
+        val trans = resp.tlyric?.lyric?.takeIf { it.isNotBlank() }
+        main.takeIf { it.isNotBlank() }?.let { it to trans }
+    }.getOrNull()
+
+    // ---------- HTTP ----------
+
+    private fun get(url: String, referer: String, client: okhttp3.OkHttpClient): String {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", BiliConstants.UA)
+            .header("Referer", referer)
+            .get()
+            .build()
+        client.newCall(request).execute().use {
+            if (!it.isSuccessful) throw IOException("HTTP ${it.code} $url")
+            return it.body?.string() ?: throw IOException("空响应")
+        }
+    }
+
+    private companion object {
+        // 网易云用独立 client:不带 B 站 Cookie/buvid,防凭据发给第三方域
+        val thirdPartyClient = okhttp3.OkHttpClient.Builder()
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .addInterceptor(
+                okhttp3.logging.HttpLoggingInterceptor().apply {
+                    level = okhttp3.logging.HttpLoggingInterceptor.Level.BASIC
+                },
+            )
+            .build()
+    }
+}
+
+/** 一行歌词:时间(毫秒)+ 文本 + 可选翻译行。 */
+data class LyricLine(val timeMs: Long, val text: String, val sub: String? = null)
+
+/**
+ * 把翻译歌词按时间戳就近合并进主歌词。
+ * 网易云 tlyric 的时间轴常与原文错位(翻译行少/时间偏移),
+ * 策略:翻译行时间落在主行 [t, 下一行t) 区间内则归属该行;容差 ±1.5s。
+ */
+internal fun mergeTranslation(main: List<LyricLine>, trans: List<LyricLine>): List<LyricLine> {
+    if (trans.isEmpty()) return main
+    val subs = arrayOfNulls<String>(main.size)
+    var ti = 0
+    for (t in trans) {
+        // 找 main 中 timeMs <= t.timeMs + 容差 的最后一行
+        while (ti < main.size && main[ti].timeMs <= t.timeMs + 1500) ti++
+        val idx = ti - 1
+        if (idx in main.indices && subs[idx] == null) subs[idx] = t.text
+    }
+    return main.mapIndexed { i, line -> line.copy(sub = subs[i]) }
+}
+
+/**
+ * LRC 解析:"[mm:ss.xx]文本",支持一行多时间标签;
+ * 跳过元信息行([ar:] [ti:] [by:] [offset:] 等),去重排序。
+ */
+fun parseLrc(raw: String): List<LyricLine> {
+    val timeTag = Regex("""\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?]""")
+    val metaOnly = Regex("""^\[(ar|ti|by|al|au|offset|length):.*]$""", RegexOption.IGNORE_CASE)
+    val out = LinkedHashMap<Long, String>()
+
+    for (line in raw.lineSequence()) {
+        val trimmed = line.trim()
+        if (trimmed.isEmpty() || metaOnly.matches(trimmed)) continue
+        val tags = timeTag.findAll(trimmed).toList()
+        if (tags.isEmpty()) continue
+        val text = trimmed.substring(tags.last().range.last + 1).trim()
+        if (text.isEmpty()) continue
+        for (t in tags) {
+            val min = t.groupValues[1].toLong()
+            val sec = t.groupValues[2].toLong()
+            val frac = t.groupValues[3].let { f ->
+                when (f.length) {
+                    0 -> 0L
+                    1 -> f.toLong() * 100
+                    2 -> f.toLong() * 10
+                    else -> f.take(3).toLong()
+                }
+            }
+            val ms = min * 60_000 + sec * 1000 + frac
+            out.putIfAbsent(ms, text)
+        }
+    }
+    return out.entries.sortedBy { it.key }.map { LyricLine(it.key, it.value) }
+}

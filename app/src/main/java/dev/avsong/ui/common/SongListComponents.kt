@@ -1,0 +1,329 @@
+package dev.avsong.ui.common
+
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
+import dev.avsong.domain.Song
+import dev.avsong.domain.formatClock
+
+/**
+ * 首页/搜索页共用的歌曲列表组件(纯色扁平:无阴影/渐变/边框)。
+ * 从 SearchScreen 抽出,避免热歌榜与搜索结果两套样式漂移。
+ */
+
+@Composable
+fun SectionHeader(title: String, subtitle: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
+}
+
+@Composable
+fun SongList(
+    songs: List<Song>,
+    onPlay: (List<Song>, Int) -> Unit,
+    showRank: Boolean = false,
+    /** 名次偏移:列表是整榜截掉前 N 首(进精选轮播)时,行首名次要接着 N 往下数。 */
+    rankOffset: Int = 0,
+    showPlayButton: Boolean = true,
+    /** 当前播放曲的 mediaId:命中行的歌名高亮 + 播放中封面盖音波条徽章。 */
+    currentMediaId: String? = null,
+    isPlaying: Boolean = false,
+    hasMore: Boolean = false,
+    loadingMore: Boolean = false,
+    onLoadMore: () -> Unit = {},
+) {
+    val listState = rememberLazyListState()
+    // 接近底部时触发加载下一页
+    LaunchedEffect(listState, hasMore, loadingMore) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            hasMore && !loadingMore && info.totalItemsCount > 0 && last >= info.totalItemsCount - 4
+        }.collect { shouldLoad -> if (shouldLoad) onLoadMore() }
+    }
+
+    LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {
+        itemsIndexed(songs, key = { _, s -> s.mediaId }) { index, song ->
+            SongRow(
+                song = song,
+                rank = if (showRank) index + 1 + rankOffset else null,
+                showPlayButton = showPlayButton,
+                isCurrent = song.mediaId == currentMediaId,
+                isPlaying = isPlaying,
+                onClick = { onPlay(songs, index) },
+            )
+        }
+        if (loadingMore) {
+            item {
+                Box(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SongRow(
+    song: Song,
+    rank: Int?,
+    onClick: () -> Unit,
+    showPlayButton: Boolean = true,
+    isCurrent: Boolean = false,
+    isPlaying: Boolean = false,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (rank != null) {
+            Text(
+                text = "$rank",
+                modifier = Modifier.width(28.dp),
+                textAlign = TextAlign.Center,
+                fontSize = 16.sp,
+                fontWeight = if (rank <= 3) FontWeight.Black else FontWeight.Medium,
+                color = if (rank <= 3) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        // 当前播放曲:整封面暗色遮罩(跟随封面圆角)+ 居中音波条,歌名高亮
+        Box {
+            CoverArt(url = song.coverUrl)
+            if (isCurrent && isPlaying) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black.copy(alpha = 0.45f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    PlayingEqualizer(modifier = Modifier.size(width = 18.dp, height = 14.dp))
+                }
+            }
+        }
+
+        Spacer(Modifier.width(if (rank != null) 12.dp else 14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                song.title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = if (isCurrent) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = listOfNotNull(
+                    song.artist.takeIf { it.isNotBlank() },
+                    song.progressHint,
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (song.durationSec > 0) {
+            Text(
+                (song.durationSec * 1000).formatClock(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 6.dp, end = 6.dp),
+            )
+        }
+        // 播放圆钮可关(首页列表行尾只留时长);前三黄色,其余深灰(纯色,无阴影)
+        if (showPlayButton) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (rank != null && rank <= 3) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = "播放",
+                    tint = if (rank != null && rank <= 3) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CoverArt(url: String?) {
+    val shape = RoundedCornerShape(12.dp)
+    Box(
+        modifier = Modifier
+            .size(52.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (url != null) {
+            AsyncImage(
+                model = url,
+                contentDescription = null,
+                modifier = Modifier.size(52.dp).clip(shape),
+            )
+        } else {
+            Icon(
+                Icons.Filled.MusicNote,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+/**
+ * 播放中的音波条:4 根错相位往复的竖条(纯色,非渐变)。
+ * Canvas 直接读动画值,只重绘不重组;只在「当前曲 && 正在播放」时由调用方组合,
+ * 暂停或非当前曲不出现。
+ */
+@Composable
+fun PlayingEqualizer(modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary) {
+    val transition = rememberInfiniteTransition(label = "equalizer")
+    val bars = List(4) { i ->
+        transition.animateFloat(
+            initialValue = 0.25f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 380 + i * 110, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "eq$i",
+        )
+    }
+    Canvas(modifier) {
+        val n = bars.size
+        val gap = 2.dp.toPx()
+        val barW = (size.width - gap * (n - 1)) / n
+        bars.forEachIndexed { i, anim ->
+            val h = size.height * anim.value
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(x = i * (barW + gap), y = size.height - h),
+                size = Size(width = barW, height = h),
+                cornerRadius = CornerRadius(barW / 2f),
+            )
+        }
+    }
+}
+
+@Composable
+fun LoadingHint(text: String) {
+    Column(
+        Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.height(16.dp))
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+fun StateHint(icon: ImageVector, title: String, subtitle: String) {
+    Column(
+        Modifier.fillMaxSize().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, null, modifier = Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
+        }
+        Spacer(Modifier.height(18.dp))
+        Text(title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
