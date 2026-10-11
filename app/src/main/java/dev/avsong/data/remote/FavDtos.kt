@@ -3,7 +3,7 @@ package dev.avsong.data.remote
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** /x/v3/fav/folder/created/list-all + collected/list 共用结构 */
+/** /x/v3/fav/folder/created/list + collected/list + list-all 共用结构(list-all 无 has_more,取默认值) */
 @Serializable
 data class FavFolderListResponse(
     val code: Int = 0,
@@ -14,6 +14,7 @@ data class FavFolderListResponse(
 data class FavFolderListData(
     val count: Int = 0,
     val list: List<FavFolder> = emptyList(),
+    @SerialName("has_more") val hasMore: Boolean = false,
 )
 
 @Serializable

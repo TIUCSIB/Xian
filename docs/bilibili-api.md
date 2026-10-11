@@ -155,10 +155,12 @@ Header 只需桌面 UA + `Referer: https://music.163.com/`。**不要带 B 站 C
 
 ```
 # 我创建的收藏夹
-GET api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=<mid>&type=2
-→ data.list[i]:{id, fid, mid, attr, title, media_count, fav_state, cover}
+GET api.bilibili.com/x/v3/fav/folder/created/list?up_mid=<mid>&type=2&pn=1&ps=20  (展示用,带封面)
+GET api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=<mid>&type=2        (轻量,⚠ 实测 cover 全为 null)
+→ data.list[i]:{id, fid, mid, attr, title, media_count, fav_state, cover} + data.has_more(仅 list)
   · attr==0 公开,非0 私密(显示锁)
-  · 加 &rid=<aid>&biz_type=2 查询时,fav_state:1=已收藏 0=未收藏(用于弹窗回显勾选)
+  · 加 &rid=<aid>&biz_type=2 查询时,fav_state:1=已收藏 0=未收藏(用于弹窗回显勾选;此场景用 list-all 即可,只需要 id/title)
+  · 2026-10-11 实测:歌单网格卡片全无封面,根因是 list-all 不回 cover;换 created/list(网页 favlist 同款)后正常
 
 # 我订阅的收藏夹
 GET api.bilibili.com/x/v3/fav/folder/collected/list?up_mid=<mid>&pn=1&ps=20

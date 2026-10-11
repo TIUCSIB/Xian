@@ -357,6 +357,18 @@ class MainViewModel(
     private val aidCache = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /**
+     * 歌单详情页「随机播放」:开随机再整队入列。
+     * 单曲循环必须先退出——REPEAT_MODE_ONE 优先级高于 shuffle,否则=当前曲无限循环(见 cyclePlayMode)。
+     */
+    fun playQueueShuffled(songs: List<Song>) {
+        if (_state.value.player.repeatMode == Player.REPEAT_MODE_ONE) {
+            playerController.setRepeatMode(Player.REPEAT_MODE_ALL)
+        }
+        playerController.setShuffle(true)
+        playQueue(songs, 0)
+    }
+
+    /**
      * 歌单卡片右下播放钮:直接播整个歌单(取第一页内容整队入列,后续翻页不自动接)。
      * 反馈走 queueNotice→Toast(成功不提示,迷你条封面变化本身就是反馈)。
      */

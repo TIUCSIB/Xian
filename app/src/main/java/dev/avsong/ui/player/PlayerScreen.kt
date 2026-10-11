@@ -170,7 +170,7 @@ fun PlayerScreen(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .matchParentSize()
-                            .blur(10.dp),
+                            .blur(3.dp),
                     )
                 }
                 Box(
@@ -246,7 +246,7 @@ fun PlayerScreen(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .matchParentSize()
-                            .blur(10.dp),
+                            .blur(3.dp),
                     )
                 }
                 Box(

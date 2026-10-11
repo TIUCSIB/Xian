@@ -86,36 +86,12 @@ fun PlaylistScreen(
     val scope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        // 顶部柠檬黄大色块(与首页/我的一致)
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.primary)
-                .statusBarsPadding()
-                .padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 14.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "歌单",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                )
-                IconButton(onClick = { showCreate = true }) {
-                    Icon(
-                        Icons.Filled.Add,
-                        contentDescription = "新建收藏夹",
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
-            }
-        }
-
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, bottom = 24.dp),
+            // 黄色大标题横幅已按用户要求去掉:它带的「新建收藏夹」+ 与合集区的 + 冗余,
+            // 新建入口收进「我创建的」标题行(2026-10-11)
+            modifier = Modifier.fillMaxSize().statusBarsPadding(),
+            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -199,20 +175,34 @@ fun PlaylistScreen(
                 }
 
                 else -> {
-                    if (state.folders.isNotEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            SectionHeader("我创建的 (${state.folders.size})")
-                        }
-                        items(state.folders, key = { "c${it.id}" }) { folder ->
-                            PlaylistCard(
-                                title = folder.title,
-                                cover = folder.cover,
-                                count = folder.mediaCount,
-                                isPrivate = folder.isPrivate,
-                                onOpen = { onOpenFolder(folder) },
-                                onPlay = { onPlayFolder(folder) },
+                    // 「我创建的」标题行带「新建收藏夹」+;空夹时也在,否则新建入口消失
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 6.dp, end = 2.dp, top = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "我创建的 (${state.folders.size})",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
                             )
+                            IconButton(onClick = { showCreate = true }) {
+                                Icon(Icons.Filled.Add, contentDescription = "新建收藏夹")
+                            }
                         }
+                    }
+                    items(state.folders, key = { "c${it.id}" }) { folder ->
+                        PlaylistCard(
+                            title = folder.title,
+                            cover = folder.cover,
+                            count = folder.mediaCount,
+                            isPrivate = folder.isPrivate,
+                            onOpen = { onOpenFolder(folder) },
+                            onPlay = { onPlayFolder(folder) },
+                        )
                     }
                     if (state.subscribed.isNotEmpty()) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
@@ -236,7 +226,7 @@ fun PlaylistScreen(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    "还没有收藏夹,点右上 + 新建",
+                                    "还没有收藏夹,点上面的 + 新建",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }

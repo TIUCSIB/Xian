@@ -50,9 +50,35 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
 
     // ---------- 读 ----------
 
+    /**
+     * 自建收藏夹。用分页版 created/list 而不是 list-all:
+     * list-all 是「选择收藏夹」弹窗的轻量端点,**实测不回封面**(卡片网格会全空),
+     * 网页端展示收藏夹列表用的就是 created/list。ps=20 一页,has_more 续拉。
+     */
     suspend fun myFolders(): List<Folder> = withContext(Dispatchers.IO) {
-        val url = "$api/x/v3/fav/folder/created/list-all?up_mid=$mid&type=2"
-        decodeFolders(get(url))
+        val folders = mutableListOf<Folder>()
+        var page = 1
+        while (page <= 5) { // 上限 100 个夹,防异常 has_more 死循环
+            val resp = json.decodeFromString<FavFolderListResponse>(
+                get("$api/x/v3/fav/folder/created/list?up_mid=$mid&type=2&pn=$page&ps=20"),
+            )
+            if (resp.code != 0) throw IOException("收藏夹接口 code=${resp.code}")
+            val data = resp.data ?: break
+            folders += data.list.map { f ->
+                Folder(
+                    id = f.id,
+                    title = f.title,
+                    cover = f.cover?.fixProtocol(),
+                    mediaCount = f.mediaCount,
+                    isPrivate = f.attr != 0,
+                    ownerMid = f.mid,
+                    ownerName = f.upper?.name,
+                )
+            }
+            if (!data.hasMore) break
+            page++
+        }
+        folders
     }
 
     suspend fun subscribedFolders(): List<Folder> = withContext(Dispatchers.IO) {
