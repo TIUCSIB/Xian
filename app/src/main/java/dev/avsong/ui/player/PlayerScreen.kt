@@ -159,12 +159,12 @@ fun PlayerScreen(
 
             Spacer(Modifier.weight(1f))
 
-            // 信息卡:实心纯色卡(Spotify 风格,毛玻璃已按用户要求移除)
+            // 信息卡:半透明深灰卡(用户要求加点透明感;不 blur,封面隐约透出)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(cardShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.55f))
                     .clickable { showLyric = !showLyric }
                     .padding(horizontal = 20.dp, vertical = 18.dp),
             ) {
@@ -220,12 +220,12 @@ fun PlayerScreen(
 
             Spacer(Modifier.height(12.dp))
 
-            // 控制卡:实心纯色卡 / 模式 | 上一首 | 播放(黄) | 下一首 | 队列
+            // 控制卡:半透明深灰卡 / 模式 | 上一首 | 播放(黄) | 下一首 | 队列
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(cardShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.55f))
                     .padding(horizontal = 18.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
