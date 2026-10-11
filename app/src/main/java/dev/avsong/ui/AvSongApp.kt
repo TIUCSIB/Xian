@@ -74,9 +74,9 @@ import dev.avsong.ui.library.CollectionContentScreen
 import dev.avsong.ui.library.FavoritePickerDialog
 import dev.avsong.ui.library.FolderContentScreen
 import dev.avsong.ui.library.LibraryScreen
+import dev.avsong.ui.library.PlaylistScreen
 import dev.avsong.ui.login.LoginScreen
 import dev.avsong.ui.player.PlayerScreen
-import dev.avsong.ui.queue.PlaylistScreen
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MusicNote
@@ -115,7 +115,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
 
     val snackbarHostState = remember { SnackbarHostState() }
     var showFavoritePicker by remember { mutableStateOf(false) }
-    // 迷你条的队列入口:底部抽屉(不再跳队列页;Routes.QUEUE 仅播放页右上入口在用)
+    // 迷你条的队列入口:底部抽屉(队列页已删,播放队列只在此抽屉展示)
     var showQueueSheet by remember { mutableStateOf(false) }
     // 播放详情:与队列抽屉同款的底部上滑面板(非导航页,用户要求)
     var showPlayerSheet by remember { mutableStateOf(false) }
@@ -160,7 +160,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
         }
     }
 
-    // 迷你条队列抽屉:从底部滑出,内嵌与队列页/歌单 tab 同一份 QueueContent;
+    // 迷你条队列抽屉:从底部滑出,内嵌 QueueContent(播放队列唯一入口,歌单 tab 已改为歌单中心);
     // 内容固定 4/5 屏(fillMaxHeight(0.8f),用户要求 2/3 仍不够),tonalElevation=0 贴合扁平风
     if (showQueueSheet) {
         val queueListState = rememberLazyListState()
@@ -364,19 +364,11 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onLoadMore = viewModel::loadMoreSearch,
                         onHistoryClick = viewModel::searchFromHistory,
                         onHistoryRemove = viewModel::removeHistory,
+                        onHistoryClear = viewModel::clearHistory,
                     )
                 }
                 composable(Routes.PLAYLIST) {
                     PlaylistScreen(
-                        queue = state.player.queue,
-                        currentIndex = state.player.currentIndex,
-                        onPlayAt = viewModel::playAt,
-                        onRemoveAt = viewModel::removeFromQueue,
-                        onMove = viewModel::moveInQueue,
-                    )
-                }
-                composable(Routes.MINE) {
-                    LibraryScreen(
                         onOpenFolder = { folder ->
                             navController.navigate(Routes.folder(folder.id, folder.title))
                         },
@@ -387,6 +379,9 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         },
                         onLogin = { navController.navigate(Routes.LOGIN) },
                     )
+                }
+                composable(Routes.MINE) {
+                    LibraryScreen(onLogin = { navController.navigate(Routes.LOGIN) })
                 }
                 composable(Routes.LOGIN) {
                     LoginScreen(onBack = { navController.popBackStack() })

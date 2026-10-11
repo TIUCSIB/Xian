@@ -41,7 +41,7 @@ import dev.avsong.ui.common.PlayingEqualizer
 import dev.avsong.ui.common.StateHint
 
 /**
- * 队列列表内容:「歌单」tab 与播放页入口共用(跳转/移除/上下移)。
+ * 队列列表内容:迷你条/播放页的队列抽屉共用(跳转/移除;歌单 tab 已改为歌单中心,不再渲染队列)。
  * 空态复用公共 StateHint,与首页/歌单页的「空」表达保持一致。
  *
  * [isPlaying] 当前曲正在播放时行首显示音波条动画;[showReorder] = false 时隐藏上下移

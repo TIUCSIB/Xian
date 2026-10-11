@@ -23,9 +23,9 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.rounded.MusicOff
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -57,6 +57,7 @@ fun SearchScreen(
     onLoadMore: () -> Unit = {},
     onHistoryClick: (String) -> Unit = {},
     onHistoryRemove: (String) -> Unit = {},
+    onHistoryClear: () -> Unit = {},
 ) {
     Column(
         Modifier
@@ -88,11 +89,10 @@ fun SearchScreen(
                 ),
             )
             Spacer(Modifier.width(4.dp))
-            IconButton(onClick = onSearch) {
-                Icon(
-                    Icons.Filled.Search,
-                    contentDescription = "搜索",
-                    tint = if (state.query.isNotBlank()) MaterialTheme.colorScheme.primary
+            TextButton(onClick = onSearch) {
+                Text(
+                    "搜索",
+                    color = if (state.query.isNotBlank()) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -124,6 +124,7 @@ fun SearchScreen(
                         history = state.searchHistory,
                         onClick = onHistoryClick,
                         onRemove = onHistoryRemove,
+                        onClear = onHistoryClear,
                     )
                 } else {
                     StateHint(
@@ -143,9 +144,13 @@ private fun HistoryChips(
     history: List<String>,
     onClick: (String) -> Unit,
     onRemove: (String) -> Unit,
+    onClear: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Icon(
                 Icons.Filled.History,
                 null,
@@ -157,6 +162,15 @@ private fun HistoryChips(
                 "搜索历史",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                "清空",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clickable(onClick = onClear)
+                    .padding(start = 8.dp, top = 4.dp, bottom = 4.dp, end = 2.dp),
             )
         }
         Spacer(Modifier.height(8.dp))

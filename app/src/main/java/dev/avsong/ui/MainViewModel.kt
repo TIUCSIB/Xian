@@ -254,7 +254,11 @@ class MainViewModel(
     }
 
     fun onQueryChange(query: String) {
-        _state.update { it.copy(query = query) }
+        _state.update { cur ->
+            // 清空输入 = 放弃本次搜索,回到历史页;否则旧结果会一直挂在列表里
+            if (query.isBlank()) cur.copy(query = query, search = SearchUiState.Idle)
+            else cur.copy(query = query)
+        }
     }
 
     fun search() {
@@ -265,11 +269,13 @@ class MainViewModel(
         }
         _state.update { it.copy(search = SearchUiState.Loading) }
         viewModelScope.launch {
+            // 响应回来时输入框内容已变(清空/改词)则丢弃,防止过期结果覆盖当前状态
+            fun stale() = _state.value.query.trim() != q
             try {
                 // 1. BV/av/分享链接直达
                 repository.resolveDirect(q)?.let { direct ->
                     searchHistoryStore.add(q)
-                    _state.update {
+                    if (!stale()) _state.update {
                         it.copy(search = SearchUiState.Result(listOf(direct), keyword = q, hasMore = false))
                     }
                     return@launch
@@ -277,7 +283,7 @@ class MainViewModel(
                 // 2. 普通搜索第一页
                 val result = repository.search(q, 1)
                 searchHistoryStore.add(q)
-                _state.update {
+                if (!stale()) _state.update {
                     it.copy(
                         search = SearchUiState.Result(
                             songs = result.items,
@@ -288,7 +294,7 @@ class MainViewModel(
                     )
                 }
             } catch (e: Exception) {
-                _state.update { it.copy(search = SearchUiState.Error(e.message ?: "请求失败")) }
+                if (!stale()) _state.update { it.copy(search = SearchUiState.Error(e.message ?: "请求失败")) }
             }
         }
     }

@@ -32,10 +32,14 @@ import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -44,13 +48,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import kotlin.math.abs
+import kotlin.math.sin
 import dev.avsong.domain.formatClock
 import dev.avsong.player.PlayerState
 import dev.avsong.ui.LyricUiState
@@ -88,7 +99,17 @@ fun PlayerScreen(
         position = positionProvider()
     }
 
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    // 根节点消费点击:面板是覆盖层,不拦截的话点击会穿透到后面的内容(实测踩过)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {},
+            ),
+    ) {
         // 背景层:全幅封面 + 纯色黑纱(半透明实色,非渐变)
         if (state.artworkUri != null && !showLyric) {
             AsyncImage(
@@ -139,15 +160,14 @@ fun PlayerScreen(
 
             Spacer(Modifier.weight(1f))
 
-            // 信息卡:曲名 / 歌手 / 进度 / (点击切换歌词)
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(cardShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f))
-                    .clickable { showLyric = !showLyric }
-                    .padding(horizontal = 20.dp, vertical = 18.dp),
-            ) {
+            // 信息卡:毛玻璃(封面模糊+黑纱)/ 曲名 / 歌手 / 进度 / (点击切换歌词)
+            FrostedCard(artworkUri = state.artworkUri, shape = cardShape, modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showLyric = !showLyric }
+                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                ) {
                 Text(
                     text = state.title ?: "未在播放",
                     style = MaterialTheme.typography.titleLarge,
@@ -175,14 +195,10 @@ fun PlayerScreen(
                     )
                 } else {
                     val dur = if (state.durationMs > 0) state.durationMs.toFloat() else 1f
-                    Slider(
-                        value = (position.toFloat() / dur).coerceIn(0f, 1f),
-                        onValueChange = { frac -> onSeek((frac * dur).roundToLong()) },
-                        colors = SliderDefaults.colors(
-                            thumbColor = MaterialTheme.colorScheme.primary,
-                            activeTrackColor = MaterialTheme.colorScheme.primary,
-                            inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-                        ),
+                    WaveformSeekBar(
+                        progress = (position.toFloat() / dur).coerceIn(0f, 1f),
+                        onSeekFraction = { frac -> onSeek((frac * dur).roundToLong()) },
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     Row(
                         Modifier.fillMaxWidth(),
@@ -201,19 +217,19 @@ fun PlayerScreen(
                     }
                 }
             }
+            }
 
             Spacer(Modifier.height(12.dp))
 
-            // 控制卡:随机 | 上一首 | 播放(黄) | 下一首 | 循环
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(cardShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f))
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
+            // 控制卡:毛玻璃 / 模式 | 上一首 | 播放(黄) | 下一首 | 队列
+            FrostedCard(artworkUri = state.artworkUri, shape = cardShape, modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
                 // 播放模式键:单击循环切换(列表循环→单曲循环→随机→顺序),图标随模式变
                 CircleButton(onClick = onCycleMode, size = 44) {
                     val (modeIcon, modeDesc) = when {
@@ -271,6 +287,7 @@ fun PlayerScreen(
                         modifier = Modifier.size(20.dp),
                     )
                 }
+                }
             }
 
             Spacer(Modifier.height(16.dp))
@@ -278,7 +295,7 @@ fun PlayerScreen(
     }
 }
 
-/** 深灰圆形按钮:纯色扁平,无阴影。 */
+/** 圆形控制键:近黑半透明底 + 白色图标(毛玻璃卡上保证可读)。 */
 @Composable
 private fun CircleButton(
     onClick: () -> Unit,
@@ -289,8 +306,90 @@ private fun CircleButton(
         modifier = Modifier
             .size(size.dp)
             .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(Color.Black.copy(alpha = 0.5f))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { content() }
+    ) {
+        CompositionLocalProvider(LocalContentColor provides Color.White) { content() }
+    }
+}
+
+/** 毛玻璃卡:封面原图模糊铺满 + 半透明黑纱(近似磨砂质感,无阴影)。 */
+@Composable
+private fun FrostedCard(
+    artworkUri: String?,
+    modifier: Modifier = Modifier,
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(28.dp),
+    content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit,
+) {
+    Box(modifier.clip(shape)) {
+        if (artworkUri != null) {
+            AsyncImage(
+                model = artworkUri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .matchParentSize()
+                    .blur(18.dp),
+            )
+            Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.38f)))
+        } else {
+            Box(Modifier.matchParentSize().background(MaterialTheme.colorScheme.surfaceContainerHigh))
+        }
+        content()
+    }
+}
+
+/**
+ * 音波进度条:竖条波形,已播黄条 / 未播灰条;点击与横向拖动均直接 seek。
+ * 条高取稳定伪随机序列,视觉上是固定形状的一条音波(与进度无关)。
+ */
+@Composable
+private fun WaveformSeekBar(
+    progress: Float,
+    onSeekFraction: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    barCount: Int = 44,
+) {
+    val bars = remember(barCount) {
+        List(barCount) { i -> 0.22f + 0.78f * abs(sin(i * 12.9898f) * 43758.5453f % 1f) }
+    }
+    var dragFraction by remember { mutableStateOf<Float?>(null) }
+    val fraction = dragFraction ?: progress
+    val playedColor = MaterialTheme.colorScheme.primary
+    val unplayedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+
+    Canvas(
+        modifier
+            .height(56.dp)
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    onSeekFraction((offset.x / size.width).coerceIn(0f, 1f))
+                }
+            }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { offset -> dragFraction = (offset.x / size.width).coerceIn(0f, 1f) },
+                    onDragEnd = {
+                        dragFraction?.let(onSeekFraction)
+                        dragFraction = null
+                    },
+                    onDragCancel = { dragFraction = null },
+                ) { change, _ ->
+                    change.consume()
+                    dragFraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                }
+            },
+    ) {
+        val gap = 2.dp.toPx()
+        val barW = (size.width - gap * (barCount - 1)) / barCount
+        bars.forEachIndexed { i, h ->
+            drawRoundRect(
+                color = if ((i + 0.5f) / barCount <= fraction) playedColor else unplayedColor,
+                topLeft = Offset(x = i * (barW + gap), y = (size.height - size.height * h) / 2),
+                size = Size(width = barW, height = size.height * h),
+                cornerRadius = CornerRadius(barW / 2f),
+            )
+        }
+    }
 }
