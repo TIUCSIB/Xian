@@ -137,8 +137,6 @@ class PlayerController(private val context: Context) {
         }
     }
 
-    fun toggleShuffle() = withController { it.shuffleModeEnabled = !it.shuffleModeEnabled }
-
     /** 抽屉模式条的三态显式设置(循环/单曲/随机),不走 toggle。 */
     fun setRepeatMode(mode: Int) = withController { it.repeatMode = mode }
     fun setShuffle(enabled: Boolean) = withController { it.shuffleModeEnabled = enabled }

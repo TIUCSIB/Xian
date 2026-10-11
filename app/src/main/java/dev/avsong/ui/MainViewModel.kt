@@ -357,7 +357,14 @@ class MainViewModel(
     fun next() = playerController.skipToNext()
     fun previous() = playerController.skipToPrevious()
     fun seekTo(ms: Long) = playerController.seekTo(ms)
-    fun toggleShuffle() = playerController.toggleShuffle()
+    fun toggleShuffle() {
+        val enable = !_state.value.player.shuffleEnabled
+        playerController.setShuffle(enable)
+        // 同 cyclePlayMode:开随机时把单曲循环拉回列表循环,避免「随机+单曲循环」死循环
+        if (enable && _state.value.player.repeatMode == Player.REPEAT_MODE_ONE) {
+            playerController.setRepeatMode(Player.REPEAT_MODE_ALL)
+        }
+    }
     fun cycleRepeat() = playerController.cycleRepeatMode()
     fun retryPlayback() = playerController.retry()
     fun playAt(index: Int) = playerController.playAt(index)
@@ -377,7 +384,11 @@ class MainViewModel(
                 playerController.setRepeatMode(Player.REPEAT_MODE_ALL)
             }
             ps.repeatMode == Player.REPEAT_MODE_ALL -> playerController.setRepeatMode(Player.REPEAT_MODE_ONE)
-            ps.repeatMode == Player.REPEAT_MODE_ONE -> playerController.setShuffle(true)
+            // 开随机必须把单曲循环改走:REPEAT_MODE_ONE 优先级高于 shuffle,否则=当前曲无限循环
+            ps.repeatMode == Player.REPEAT_MODE_ONE -> {
+                playerController.setRepeatMode(Player.REPEAT_MODE_ALL)
+                playerController.setShuffle(true)
+            }
             else -> playerController.setRepeatMode(Player.REPEAT_MODE_ALL)
         }
     }

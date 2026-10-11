@@ -447,7 +447,7 @@ private fun DrawerTab(
 ) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
+            // 不 clip:徽标要向上溢出文字右上角,裁剪会切掉它的一半
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
