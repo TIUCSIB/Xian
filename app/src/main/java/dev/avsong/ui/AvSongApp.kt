@@ -1,5 +1,9 @@
 package dev.avsong.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,8 +54,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
@@ -130,6 +134,11 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
         if (result == SnackbarResult.ActionPerformed) viewModel.retryPlayback()
     }
 
+    // 播放面板打开时拦截系统返回:收回面板而不是退出应用
+    BackHandler(enabled = showPlayerSheet) {
+        showPlayerSheet = false
+    }
+
     // 下载反馈:Toast(系统窗口,盖在抽屉上面;Snackbar 会被抽屉窗口挡住)
     val downloadMsg by viewModel.downloadMessage.collectAsState()
     val appContext = LocalContext.current.applicationContext
@@ -147,32 +156,6 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                 favRepo = viewModel.favoriteRepository,
                 bvid = bvid,
                 onDismiss = { showFavoritePicker = false },
-            )
-        }
-    }
-
-    // 播放详情抽屉:全屏上滑面板,containerColor 透明显出自带封面背景;
-    // dragHandle=null(顶栏自带上收起箭头),下拉或箭头均可收起
-    if (showPlayerSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showPlayerSheet = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = Color.Transparent,
-            tonalElevation = 0.dp,
-            dragHandle = null,
-        ) {
-            PlayerScreen(
-                state = state.player,
-                lyric = state.lyric,
-                onCollapse = { showPlayerSheet = false },
-                onQueue = { showQueueSheet = true },
-                onFavorite = { showFavoritePicker = true },
-                onPlayPause = viewModel::playPause,
-                onCycleMode = viewModel::cyclePlayMode,
-                onNext = viewModel::next,
-                onPrevious = viewModel::previous,
-                onSeek = viewModel::seekTo,
-                positionProvider = viewModel::currentPosition,
             )
         }
     }
@@ -317,6 +300,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
         }
     }
 
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
@@ -430,6 +414,28 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                     )
                 }
             }
+        }
+    }
+
+        // 播放面板:从底部上滑覆盖(组合内 overlay,输入必然可达;非弹窗窗口)
+        AnimatedVisibility(
+            visible = showPlayerSheet,
+            enter = slideInVertically(initialOffsetY = { it }),
+            exit = slideOutVertically(targetOffsetY = { it }),
+        ) {
+            PlayerScreen(
+                state = state.player,
+                lyric = state.lyric,
+                onCollapse = { showPlayerSheet = false },
+                onQueue = { showQueueSheet = true },
+                onFavorite = { showFavoritePicker = true },
+                onPlayPause = viewModel::playPause,
+                onCycleMode = viewModel::cyclePlayMode,
+                onNext = viewModel::next,
+                onPrevious = viewModel::previous,
+                onSeek = viewModel::seekTo,
+                positionProvider = viewModel::currentPosition,
+            )
         }
     }
 }

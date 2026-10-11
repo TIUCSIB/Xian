@@ -126,12 +126,7 @@ fun PlayerScreen(
                         tint = MaterialTheme.colorScheme.onBackground,
                     )
                 }
-                Text(
-                    if (showLyric) "歌词" else "正在播放",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.weight(1f),
-                )
+                Spacer(Modifier.weight(1f))
                 IconButton(onClick = onFavorite, modifier = Modifier.size(44.dp)) {
                     Icon(
                         Icons.Rounded.FavoriteBorder,
