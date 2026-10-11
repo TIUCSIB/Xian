@@ -2,7 +2,11 @@ package dev.avsong.ui.library
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.MediaItem
 import dev.avsong.data.CollectionRepository
+import dev.avsong.player.PlayerController
+import kotlinx.coroutines.delay
+import dev.avsong.ui.toMediaItem
 import dev.avsong.data.CollectionStore
 import dev.avsong.data.FavoriteRepository
 import dev.avsong.data.SavedCollection
@@ -155,14 +159,14 @@ class FolderContentViewModel(
 
     fun loadMore() {
         val s = _state.value
-        if (s.loading || s.loadingMore || !s.hasMore) return
+        if (s.loading || s.loadingMore || _loadingAll.value || !s.hasMore) return
         viewModelScope.launch {
             _state.update { it.copy(loadingMore = true) }
             try {
                 val result = favRepo.folderContents(folderId, s.page + 1)
                 _state.update {
                     it.copy(
-                        songs = it.songs + result.songs,
+                        songs = (it.songs + result.songs).distinctBy { song -> song.bvid },
                         page = s.page + 1,
                         hasMore = result.hasMore,
                         loadingMore = false,
@@ -170,6 +174,43 @@ class FolderContentViewModel(
                 }
             } catch (e: Exception) {
                 _state.update { it.copy(loadingMore = false) }
+            }
+        }
+    }
+
+    /** 搜索用的「加载全部」:拉完剩余页进 state(不动队列),期间 loadMore 让位防竞态。 */
+    private val _loadingAll = MutableStateFlow(false)
+    val loadingAll: StateFlow<Boolean> = _loadingAll.asStateFlow()
+
+    fun loadAll() {
+        if (_loadingAll.value) return
+        viewModelScope.launch {
+            _loadingAll.value = true
+            try {
+                var page = _state.value.page
+                var hasMore = _state.value.hasMore
+                var songs = _state.value.songs
+                var failures = 0
+                while (hasMore) {
+                    val result = try {
+                        favRepo.folderContents(folderId, page + 1)
+                    } catch (e: Exception) {
+                        if (++failures < 3) {
+                            delay(1500)
+                            continue
+                        }
+                        throw e
+                    }
+                    failures = 0
+                    page += 1
+                    hasMore = result.hasMore
+                    songs = (songs + result.songs).distinctBy { it.bvid }
+                    _state.update { it.copy(songs = songs, page = page, hasMore = hasMore) }
+                }
+            } catch (e: Exception) {
+                // 拉全量失败:保留已加载部分,搜索照常在已加载范围里过滤
+            } finally {
+                _loadingAll.value = false
             }
         }
     }
@@ -195,6 +236,7 @@ class CollectionContentViewModel(
     private val collectionRepo: CollectionRepository,
     val mid: Long,
     val seasonId: Long,
+    private val playerController: PlayerController,
 ) : ViewModel() {
 
     data class UiState(
@@ -246,39 +288,52 @@ class CollectionContentViewModel(
     val loadingAll: StateFlow<Boolean> = _loadingAll.asStateFlow()
 
     /**
-     * 播放前把合集剩余页全部拉完再回调 onReady(用户反馈:大合集点播放队列只有 20 首)。
-     * 拉取过程中边拉边更新列表;失败则用已加载部分照常播。
+     * 合集播放:已加载部分立即起播,后台继续拉剩余页并**逐批追加进队列**,
+     * 队列会从 20 首一路长到合集全量(用户反馈:等全部拉完再播太慢)。
+     * 单页失败重试 2 次(间隔 1.5s,防 B 站限流 -412),仍失败则中止补全(保留已入列部分)。
      */
-    fun playAll(startIndex: Int, onReady: (List<Song>, Int) -> Unit) {
+    fun playWithFill(startIndex: Int, playLoaded: (List<Song>, Int) -> Unit) {
         val s = _state.value
         if (s.loading || s.loadingAll) return
         viewModelScope.launch {
             _loadingAll.value = true
-            _state.update { it.copy(loadingMore = true) }
+            // 1) 已加载部分先播(点哪首从哪首起)
+            playLoaded(s.songs, startIndex)
             try {
                 var songs = s.songs
                 var page = s.page
                 var hasMore = s.hasMore
+                var failures = 0
                 while (hasMore) {
-                    val result = collectionRepo.page(mid, seasonId, page + 1)
-                    songs = (songs + result.songs).distinctBy { it.bvid }
+                    val result = try {
+                        collectionRepo.page(mid, seasonId, page + 1)
+                    } catch (e: Exception) {
+                        if (++failures < 3) {
+                            delay(1500)
+                            continue
+                        }
+                        throw e
+                    }
+                    failures = 0
                     page += 1
                     hasMore = result.hasMore
+                    val fresh = result.songs.filter { new -> songs.none { it.bvid == new.bvid } }
+                    if (fresh.isEmpty()) continue
+                    songs = songs + fresh
                     _state.update { it.copy(songs = songs, page = page, hasMore = hasMore) }
+                    playerController.appendSongsToQueue(fresh.map { it.toMediaItem() })
                 }
-                onReady(songs, startIndex)
             } catch (e: Exception) {
-                onReady(s.songs, startIndex)
+                // 补全中止:队列保留已入列的部分
             } finally {
                 _loadingAll.value = false
-                _state.update { it.copy(loadingMore = false) }
             }
         }
     }
 
     fun loadMore() {
         val s = _state.value
-        if (s.loading || s.loadingMore || !s.hasMore) return
+        if (s.loading || s.loadingMore || _loadingAll.value || !s.hasMore) return
         viewModelScope.launch {
             _state.update { it.copy(loadingMore = true) }
             try {
@@ -294,6 +349,48 @@ class CollectionContentViewModel(
                 }
             } catch (e: Exception) {
                 _state.update { it.copy(loadingMore = false) }
+            }
+        }
+    }
+
+    /**
+     * 搜索用的「加载全部」:把剩余页全部拉进 state(不动队列,与 playWithFill 的补队列分开),
+     * 边加载边过滤。-412 防护同 playWithFill;失败保留已加载部分。
+     */
+    fun loadAll() {
+        if (_loadingAll.value) return
+        viewModelScope.launch {
+            _loadingAll.value = true
+            try {
+                var page = _state.value.page
+                var hasMore = _state.value.hasMore
+                var songs = _state.value.songs
+                var failures = 0
+                while (hasMore) {
+                    val result = try {
+                        collectionRepo.page(mid, seasonId, page + 1)
+                    } catch (e: Exception) {
+                        if (++failures < 3) {
+                            delay(1500)
+                            continue
+                        }
+                        throw e
+                    }
+                    failures = 0
+                    page += 1
+                    hasMore = result.hasMore
+                    val fresh = result.songs.filter { new -> songs.none { it.bvid == new.bvid } }
+                    if (fresh.isNotEmpty()) {
+                        songs = songs + fresh
+                        _state.update { it.copy(songs = songs, page = page, hasMore = hasMore) }
+                    } else {
+                        _state.update { it.copy(page = page, hasMore = hasMore) }
+                    }
+                }
+            } catch (e: Exception) {
+                // 拉全量中止:保留已加载部分
+            } finally {
+                _loadingAll.value = false
             }
         }
     }

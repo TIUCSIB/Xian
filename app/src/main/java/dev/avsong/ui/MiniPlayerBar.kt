@@ -19,6 +19,7 @@ import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -110,40 +111,23 @@ fun MiniPlayerBar(
         )
         Spacer(Modifier.width(8.dp))
 
-        // 深灰圆钮:播放/暂停
-        CircleButton(onClick = onPlayPause) {
+        // 播放/暂停与队列:裸图标(用户要求按钮不带圆形背景)
+        IconButton(onClick = onPlayPause, modifier = Modifier.size(40.dp)) {
             Icon(
                 imageVector = if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                 contentDescription = if (state.isPlaying) "暂停" else "播放",
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(24.dp),
             )
         }
         Spacer(Modifier.width(4.dp))
 
-        // 深灰圆钮:播放队列
-        CircleButton(onClick = onQueue) {
+        IconButton(onClick = onQueue, modifier = Modifier.size(40.dp)) {
             Icon(
                 Icons.AutoMirrored.Rounded.PlaylistPlay,
                 contentDescription = "播放队列",
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(22.dp),
             )
         }
         Spacer(Modifier.width(4.dp))
     }
-}
-
-/** 深灰圆形按钮:纯色扁平,无阴影。 */
-@Composable
-private fun CircleButton(
-    onClick: () -> Unit,
-    content: @Composable () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .size(38.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) { content() }
 }

@@ -19,7 +19,13 @@ sealed interface LoginUiState {
     data object Generating : LoginUiState
     data class Showing(val qr: Bitmap, val status: String) : LoginUiState
     data object Expired : LoginUiState
-    data class LoggedIn(val uname: String, val vipLabel: String?) : LoginUiState
+    data class LoggedIn(
+        val uname: String,
+        val vipLabel: String?,
+        val face: String? = null,
+        val level: Int = 0,
+        val coin: Double = 0.0,
+    ) : LoginUiState
     data class Failed(val message: String) : LoginUiState
 }
 
@@ -28,11 +34,23 @@ class LoginViewModel(private val authStore: AuthStore) : ViewModel() {
     private val _state = MutableStateFlow<LoginUiState>(LoginUiState.Idle)
     val state: StateFlow<LoginUiState> = _state.asStateFlow()
 
+    // 每次 VM 创建只刷新一次资料,防 collect→saveProfile→collect 死循环
+    private var profileRefreshed = false
+
     init {
         viewModelScope.launch {
             authStore.state.collect { a ->
                 if (a.isLoggedIn) {
-                    _state.value = LoginUiState.LoggedIn(a.uname ?: "已登录", a.vipLabel)
+                    _state.value = LoginUiState.LoggedIn(a.uname ?: "已登录", a.vipLabel, a.face, a.level, a.coin)
+                    if (!profileRefreshed) {
+                        profileRefreshed = true
+                        // 进「我的」tab 静默刷新一次:硬币/等级是活数据,也兜底旧会话没存的头像等字段
+                        runCatching {
+                            QrLogin.fetchProfile()?.let {
+                                authStore.saveProfile(it.uname, it.face, it.vipLabel, it.level, it.coin)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -60,8 +78,14 @@ class LoginViewModel(private val authStore: AuthStore) : ViewModel() {
                 is QrLogin.PollResult.Success -> {
                     authStore.saveCookies(r.sessData, r.biliJct, r.dedeUserId)
                     val profile = QrLogin.fetchProfile()
-                    profile?.let { authStore.saveProfile(it.uname, it.vipLabel) }
-                    _state.value = LoginUiState.LoggedIn(profile?.uname ?: "已登录", profile?.vipLabel)
+                    profile?.let { authStore.saveProfile(it.uname, it.face, it.vipLabel, it.level, it.coin) }
+                    _state.value = LoginUiState.LoggedIn(
+                        profile?.uname ?: "已登录",
+                        profile?.vipLabel,
+                        profile?.face,
+                        profile?.level ?: 0,
+                        profile?.coin ?: 0.0,
+                    )
                     return
                 }
                 QrLogin.PollResult.Expired -> {

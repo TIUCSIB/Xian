@@ -7,6 +7,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -21,9 +23,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -34,6 +38,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -46,6 +52,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -86,18 +94,46 @@ fun PlaylistDetailContent(
     onAddToQueue: (Song) -> Unit,
     onDownload: (Song) -> Unit,
     onRemoveSong: ((Song) -> Unit)? = null,
+    /** 歌单内搜索:打开搜索时触发「加载全部」(大合集要搜得到就得全量),进度经 [loadingAll]。 */
+    loadingAll: Boolean = false,
+    onLoadAll: () -> Unit = {},
 ) {
+    // 搜索态:顶栏换成搜索框,列表隐藏头部只渲染过滤结果
+    var searching by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {},
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-            )
+            if (searching) {
+                SearchTopBar(
+                    query = query,
+                    onQueryChange = { query = it },
+                    onExit = {
+                        searching = false
+                        query = ""
+                    },
+                )
+            } else {
+                TopAppBar(
+                    title = {},
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    },
+                    actions = {
+                        if (songs.isNotEmpty()) {
+                            IconButton(onClick = {
+                                searching = true
+                                onLoadAll()
+                            }) {
+                                Icon(Icons.Rounded.Search, contentDescription = "搜索歌单内歌曲")
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                )
+            }
         },
     ) { padding ->
         when {
@@ -116,6 +152,20 @@ fun PlaylistDetailContent(
                 contentAlignment = Alignment.Center,
             ) { Text(emptyText, color = MaterialTheme.colorScheme.onSurfaceVariant) }
 
+            searching -> SearchResults(
+                songs = songs,
+                query = query,
+                loadingAll = loadingAll,
+                currentMediaId = currentMediaId,
+                isPlaying = isPlaying,
+                onPlay = onPlay,
+                onPlayNext = onPlayNext,
+                onAddToQueue = onAddToQueue,
+                onDownload = onDownload,
+                onRemove = onRemoveSong,
+                modifier = Modifier.fillMaxSize().padding(padding),
+            )
+
             else -> {
                 val listState = rememberLazyListState()
                 // 接近列表底部时自动加载下一页(原两个详情页的同款逻辑收拢到这里)
@@ -129,7 +179,7 @@ fun PlaylistDetailContent(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize().padding(padding),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 16.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp),
                 ) {
                     item(key = "header") {
                         DetailHeader(
@@ -401,6 +451,128 @@ private fun NumberedSongRow(
                             onRemove(song)
                             menuExpanded = false
                         },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 搜索态顶栏:返回键(退出搜索)+ 自动聚焦的搜索框 + 清空键。 */
+@Composable
+private fun SearchTopBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onExit: () -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .padding(start = 4.dp, end = 8.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onExit) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "退出搜索")
+        }
+        TextField(
+            value = query,
+            onValueChange = onQueryChange,
+            placeholder = {
+                Text(
+                    "搜索歌单内的歌曲",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            singleLine = true,
+            modifier = Modifier.weight(1f).focusRequester(focusRequester),
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = Color.Transparent,
+                unfocusedContainerColor = Color.Transparent,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+                cursorColor = MaterialTheme.colorScheme.primary,
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+            ),
+        )
+        if (query.isNotEmpty()) {
+            IconButton(onClick = { onQueryChange("") }) {
+                Icon(Icons.Rounded.Close, contentDescription = "清空")
+            }
+        }
+    }
+}
+
+/**
+ * 搜索结果列表:按标题/UP 名实时过滤已加载歌曲(打开搜索时已触发加载全部,
+ * 结果会随后台拉页逐渐变全)。点行播放的是**过滤后的子集**(队列只装筛出来的歌)。
+ */
+@Composable
+private fun SearchResults(
+    songs: List<Song>,
+    query: String,
+    loadingAll: Boolean,
+    currentMediaId: String?,
+    isPlaying: Boolean,
+    onPlay: (List<Song>, Int) -> Unit,
+    onPlayNext: (Song) -> Unit,
+    onAddToQueue: (Song) -> Unit,
+    onDownload: (Song) -> Unit,
+    onRemove: ((Song) -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val filtered = if (query.isBlank()) songs else songs.filter {
+        it.title.contains(query, ignoreCase = true) || it.artist.contains(query, ignoreCase = true)
+    }
+    Column(modifier) {
+        if (loadingAll) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(
+                    Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "正在加载全部歌曲… 已加载 ${songs.size} 首",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (filtered.isEmpty()) {
+            Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    if (loadingAll) "还没有匹配的结果…" else "没有找到「$query」",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(bottom = 16.dp),
+            ) {
+                itemsIndexed(filtered, key = { _, s -> s.bvid }) { index, song ->
+                    NumberedSongRow(
+                        number = index + 1,
+                        song = song,
+                        isCurrent = song.mediaId == currentMediaId,
+                        isPlaying = isPlaying,
+                        onClick = { onPlay(filtered, index) },
+                        onPlayNext = onPlayNext,
+                        onAddToQueue = onAddToQueue,
+                        onDownload = onDownload,
+                        onRemove = onRemove,
                     )
                 }
             }

@@ -7,8 +7,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.core.view.WindowCompat
 import androidx.navigation.compose.rememberNavController
 import dev.avsong.ui.AvSongApp
 import dev.avsong.ui.rememberMainViewModel
@@ -29,7 +32,12 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            AvSongTheme {
+            val app = applicationContext as AvSongApp
+            val dark by app.themeStore.dark.collectAsState()
+            // 状态栏图标颜色跟随 app 主题(app 不随系统,enableEdgeToEdge 的默认判定不够用)
+            val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+            SideEffect { insetsController.isAppearanceLightStatusBars = !dark }
+            AvSongTheme(darkTheme = dark) {
                 val navController = rememberNavController()
                 val viewModel = rememberMainViewModel()
                 AvSongApp(navController = navController, viewModel = viewModel)

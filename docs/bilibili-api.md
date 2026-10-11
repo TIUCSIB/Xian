@@ -114,7 +114,7 @@ GET https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=<k
 ```
 
 - 二维码约 180s 过期;轮询 1.5~2s 一次。
-- 登录后 `GET api.bilibili.com/x/web-interface/nav`(此时 code:0)取 `data.uname`、`data.vip.label.text`、`data.vip.vipStatus`。
+- 登录后 `GET api.bilibili.com/x/web-interface/nav`(此时 code:0)取用户资料。⚠ 实测(2026-10-11)字段映射:**`data.money` 是硬币数,`data.coin` 是 B 币余额且响应里常缺省**——别映射反;等级在 `data.level_info.current_level`(Lv0~6);头像 `data.face` 可能带 `http://`/`//` 协议头,展示前归一化 https;`data.vip.vipStatus==1` 时 `data.vip.label.text` 才是会员文案,非会员别渲染。DTO 在 `BiliDtos.kt`,拉取+持久化在 `QrLogin.fetchProfile`/`AuthStore`。
 - Cookie 持久化:DataStore(`data/auth/AuthStore.kt`);注入:`BiliHttp.authCookie` → 拦截器拼进所有请求 Cookie 头(与 buvid 合并)。
 - ⚠ 实测:generate 端点在 **api.bilibili.com 域返回 404**,必须走 passport 域。
 - 登录后 playurl 的 `dash.audio` 会出现更高档(30232→30280→30251 Hi-Res/30250 杜比,FLAC 在 `data.dash.flac`)。`maxByOrNull { bandwidth }` 能自动选中 audio 里最高档;**但 FLAC/Hi-Res 可能需要更大的 fnval 位域(如 4048)才返回,待登录后实测**。

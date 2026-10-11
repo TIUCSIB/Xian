@@ -177,10 +177,19 @@ data class NavResponse(
 @Serializable
 data class NavData(
     val isLogin: Boolean = false,
+    val mid: Long = 0,
     val uname: String = "",
     val face: String = "",
+    // ⚠ 实测:nav 的 coin 是 B币余额(响应常缺省此字段),硬币数在 money —— 别映射反了
+    @SerialName("money") val coin: Double = 0.0,
+    @SerialName("level_info") val levelInfo: NavLevelInfo? = null,
     val vip: NavVip? = null,
     @SerialName("vipStatus") val vipStatus: Int = 0,
+)
+
+@Serializable
+data class NavLevelInfo(
+    @SerialName("current_level") val currentLevel: Int = 0,
 )
 
 @Serializable

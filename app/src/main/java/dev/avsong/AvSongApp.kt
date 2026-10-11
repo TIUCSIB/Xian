@@ -15,6 +15,7 @@ import dev.avsong.data.PlayHistoryStore
 import dev.avsong.data.SearchHistoryStore
 import dev.avsong.data.auth.AuthStore
 import dev.avsong.player.PlayerController
+import dev.avsong.ui.theme.ThemeStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -43,6 +44,9 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
     lateinit var playHistoryStore: PlayHistoryStore
         private set
 
+    lateinit var themeStore: ThemeStore
+        private set
+
     /** 真实 B 站数据源(匿名单例,UI 与 ExoPlayer resolver 共用)。 */
     val songRepository: BiliSongRepository get() = BiliSongRepository
 
@@ -54,6 +58,7 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
         searchHistoryStore = SearchHistoryStore(this)
         collectionStore = CollectionStore(this)
         playHistoryStore = PlayHistoryStore(this)
+        themeStore = ThemeStore(this)
 
         // 登录态 → OkHttp 拦截器的 Cookie 注入点(含启动时的持久化恢复)
         appScope.launch {
@@ -62,6 +67,8 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
         }
         // 已保存合集(UP 主合集=歌单)的本地持久化恢复
         appScope.launch { collectionStore.load() }
+        // 日夜间模式持久化恢复
+        appScope.launch { themeStore.load() }
     }
 
     /**

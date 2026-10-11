@@ -99,7 +99,12 @@ private class CollectionContentViewModelFactory(
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return CollectionContentViewModel(dev.avsong.data.CollectionRepository, mid, seasonId) as T
+        return CollectionContentViewModel(
+            dev.avsong.data.CollectionRepository,
+            mid,
+            seasonId,
+            app.playerController,
+        ) as T
     }
 }
 

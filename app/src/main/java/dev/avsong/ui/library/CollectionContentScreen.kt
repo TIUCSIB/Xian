@@ -27,6 +27,8 @@ fun CollectionContentScreen(
 ) {
     val vm = rememberCollectionContentViewModel(mid, seasonId)
     val state by vm.state.collectAsState()
+    // 与播放补全(playWithFill)共用同一个 loadingAll 标记,互相防竞态
+    val loadingAll by vm.loadingAll.collectAsState()
 
     PlaylistDetailContent(
         title = state.title.ifBlank { fallbackTitle },
@@ -42,7 +44,7 @@ fun CollectionContentScreen(
         onLoadMore = vm::loadMore,
         onBack = onBack,
         // 播放前先拉全量:否则大合集点播放只入列已加载的第一页(20 首)
-        onPlay = { _, index -> vm.playAll(index, onPlay) },
+        onPlay = { _, index -> vm.playWithFill(index, onPlay) },
         onShuffle = onShuffle,
         currentMediaId = currentMediaId,
         isPlaying = isPlaying,
@@ -50,5 +52,7 @@ fun CollectionContentScreen(
         onAddToQueue = onAddToQueue,
         onDownload = onDownload,
         onRemoveSong = null,
+        loadingAll = loadingAll,
+        onLoadAll = vm::loadAll,
     )
 }

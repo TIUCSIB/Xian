@@ -34,6 +34,8 @@ import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -243,22 +245,26 @@ private fun FeaturedSongCard(
                 )
             }
         }
+        // 底部向上渐变遮罩:保证播放键在浅色封面上可读(用户明确要求,禁渐变规则的显式例外)
         Box(
             Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.45f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.55f),
+                    )
+                ),
+        )
+        Icon(
+            if (playingThis) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+            contentDescription = if (playingThis) "暂停" else "播放${song.title}",
+            tint = Color.White,
+            modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(12.dp)
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                if (playingThis) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                contentDescription = if (playingThis) "暂停" else "播放${song.title}",
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(24.dp),
-            )
-        }
+                .padding(14.dp)
+                .size(32.dp),
+        )
     }
 }
 

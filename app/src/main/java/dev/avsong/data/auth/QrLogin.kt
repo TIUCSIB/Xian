@@ -82,13 +82,28 @@ object QrLogin {
             val nav = json.decodeFromString<NavResponse>(body).data ?: return@withContext null
             Profile(
                 uname = nav.uname,
-                face = nav.face,
+                face = nav.face.takeIf { it.isNotBlank() }?.let(::httpsUrl),
                 vipLabel = nav.vip?.label?.text?.takeIf { it.isNotBlank() && nav.vip?.vipStatus == 1 },
+                level = nav.levelInfo?.currentLevel ?: 0,
+                coin = nav.coin,
             )
         }.getOrNull()
     }
 
-    data class Profile(val uname: String?, val face: String?, val vipLabel: String?)
+    data class Profile(
+        val uname: String?,
+        val face: String?,
+        val vipLabel: String?,
+        val level: Int = 0,
+        val coin: Double = 0.0,
+    )
+
+    /** B 站图片 URL 可能是 `//` 或 `http://` 协议头,统一补成 https(docs 常见坑表)。 */
+    private fun httpsUrl(url: String) = when {
+        url.startsWith("//") -> "https:$url"
+        url.startsWith("http://") -> "https://${url.removePrefix("http://")}"
+        else -> url
+    }
 
     private const val api = "https://passport.bilibili.com"
 

@@ -26,6 +26,7 @@ fun FolderContentScreen(
 ) {
     val vm = rememberFolderContentViewModel(folderId)
     val state by vm.state.collectAsState()
+    val loadingAll by vm.loadingAll.collectAsState()
 
     PlaylistDetailContent(
         title = folderTitle,
@@ -48,5 +49,7 @@ fun FolderContentScreen(
         onAddToQueue = onAddToQueue,
         onDownload = onDownload,
         onRemoveSong = { vm.removeFromFolder(it) },
+        loadingAll = loadingAll,
+        onLoadAll = vm::loadAll,
     )
 }
