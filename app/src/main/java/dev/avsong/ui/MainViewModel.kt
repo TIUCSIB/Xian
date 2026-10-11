@@ -88,6 +88,7 @@ class MainViewModel(
      */
     private val homeCache = mutableMapOf<HomeSource, List<Song>>()
     private var popularPage = 1
+    private var rankPage = 1
 
     init {
         viewModelScope.launch {
@@ -173,7 +174,9 @@ class MainViewModel(
                 // 切源先清空,避免旧源列表在加载期间短暂串台
                 homeSongs = homeCache[source].orEmpty(),
                 homeLoading = !homeCache.containsKey(source),
-                homeHasMore = source == HomeSource.POPULAR && homeCache.containsKey(source),
+                homeHasMore =
+                    (source == HomeSource.POPULAR || source == HomeSource.RANKING) &&
+                        homeCache.containsKey(source),
                 homeLoadingMore = false,
             )
         }
@@ -190,7 +193,10 @@ class MainViewModel(
             }
             try {
                 val songs = when (source) {
-                    HomeSource.RANKING -> repository.getRanking()
+                    HomeSource.RANKING -> {
+                        rankPage = 1
+                        repository.getRanking()
+                    }
                     HomeSource.RECOMMEND -> repository.getRecommend()
                     HomeSource.POPULAR -> {
                         popularPage = 1
@@ -207,7 +213,9 @@ class MainViewModel(
                     it.copy(
                         homeSongs = songs,
                         homeLoading = false,
-                        homeHasMore = source == HomeSource.POPULAR && songs.isNotEmpty(),
+                        homeHasMore =
+                            (source == HomeSource.POPULAR || source == HomeSource.RANKING) &&
+                                songs.isNotEmpty(),
                     )
                 }
             } catch (e: NotLoggedInException) {
@@ -226,26 +234,42 @@ class MainViewModel(
         }
     }
 
-    /** 上拉加载下一页(目前只有「热门」支持翻页)。 */
+    /** 上拉加载下一页(「热门」与「热歌榜」支持翻页)。 */
     fun loadMoreHome() {
         val cur = _state.value
-        if (cur.homeSource != HomeSource.POPULAR) return
+        if (cur.homeSource != HomeSource.POPULAR && cur.homeSource != HomeSource.RANKING) return
         if (!cur.homeHasMore || cur.homeLoadingMore || cur.homeLoading) return
         viewModelScope.launch {
             _state.update { it.copy(homeLoadingMore = true) }
             try {
-                val next = repository.getPopular(popularPage + 1)
-                // 翻页期间可能已切源/换页,基于最新状态合并
-                val base = _state.value.homeSongs
-                val merged = (base + next.items).distinctBy { it.bvid }
-                popularPage += 1
-                homeCache[HomeSource.POPULAR] = merged
-                _state.update {
-                    it.copy(
-                        homeSongs = merged,
-                        homeHasMore = next.hasMore,
-                        homeLoadingMore = false,
-                    )
+                if (cur.homeSource == HomeSource.RANKING) {
+                    // 热歌榜:接口无总量字段,新增为 0(到底/循环)即停
+                    val next = repository.getRankingPage(rankPage + 1)
+                    val base = _state.value.homeSongs
+                    val merged = (base + next).distinctBy { it.bvid }
+                    rankPage += 1
+                    homeCache[HomeSource.RANKING] = merged
+                    _state.update {
+                        it.copy(
+                            homeSongs = merged,
+                            homeHasMore = merged.size > base.size,
+                            homeLoadingMore = false,
+                        )
+                    }
+                } else {
+                    val next = repository.getPopular(popularPage + 1)
+                    // 翻页期间可能已切源/换页,基于最新状态合并
+                    val base = _state.value.homeSongs
+                    val merged = (base + next.items).distinctBy { it.bvid }
+                    popularPage += 1
+                    homeCache[HomeSource.POPULAR] = merged
+                    _state.update {
+                        it.copy(
+                            homeSongs = merged,
+                            homeHasMore = next.hasMore,
+                            homeLoadingMore = false,
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 _state.update { it.copy(homeLoadingMore = false) }

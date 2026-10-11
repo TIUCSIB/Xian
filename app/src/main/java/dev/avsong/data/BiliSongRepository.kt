@@ -84,7 +84,9 @@ object BiliSongRepository : SongRepository {
         )
     }
 
-    override suspend fun getRanking(): List<Song> = withContext(Dispatchers.IO) { rankingBlocking() }
+    override suspend fun getRanking(): List<Song> = withContext(Dispatchers.IO) { rankingBlocking(1) }
+    override suspend fun getRankingPage(page: Int): List<Song> =
+        withContext(Dispatchers.IO) { rankingBlocking(page) }
 
     // ---------- 发现:推荐 / 热门 / 排行 / 最近播放 ----------
 
@@ -249,10 +251,10 @@ object BiliSongRepository : SongRepository {
     )
 
     @Throws(IOException::class)
-    private fun rankingBlocking(): List<Song> {
+    private fun rankingBlocking(pageNum: Int): List<Song> {
         ensureBuvid()
         val resp = getJson(
-            "$baseUrl/x/centralization/interface/music/comprehensive/web/rank",
+            "$baseUrl/x/centralization/interface/music/comprehensive/web/rank?pn=$pageNum",
             referer = "https://music.bilibili.com/pc/music-center",
         )
         val list = json.decodeFromString<RankResponse>(resp).data?.list.orEmpty()

@@ -207,6 +207,7 @@ class CollectionContentViewModel(
         val hasMore: Boolean = false,
         val loading: Boolean = true,
         val loadingMore: Boolean = false,
+        val loadingAll: Boolean = false,
         val error: String? = null,
     )
 
@@ -236,6 +237,41 @@ class CollectionContentViewModel(
                 }
             } catch (e: Exception) {
                 _state.update { it.copy(loading = false, error = e.message) }
+            }
+        }
+    }
+
+    /** 播放前先拉全量的进度标记(合集按页加载,直接播只入列已加载部分)。 */
+    private val _loadingAll = MutableStateFlow(false)
+    val loadingAll: StateFlow<Boolean> = _loadingAll.asStateFlow()
+
+    /**
+     * 播放前把合集剩余页全部拉完再回调 onReady(用户反馈:大合集点播放队列只有 20 首)。
+     * 拉取过程中边拉边更新列表;失败则用已加载部分照常播。
+     */
+    fun playAll(startIndex: Int, onReady: (List<Song>, Int) -> Unit) {
+        val s = _state.value
+        if (s.loading || s.loadingAll) return
+        viewModelScope.launch {
+            _loadingAll.value = true
+            _state.update { it.copy(loadingMore = true) }
+            try {
+                var songs = s.songs
+                var page = s.page
+                var hasMore = s.hasMore
+                while (hasMore) {
+                    val result = collectionRepo.page(mid, seasonId, page + 1)
+                    songs = (songs + result.songs).distinctBy { it.bvid }
+                    page += 1
+                    hasMore = result.hasMore
+                    _state.update { it.copy(songs = songs, page = page, hasMore = hasMore) }
+                }
+                onReady(songs, startIndex)
+            } catch (e: Exception) {
+                onReady(s.songs, startIndex)
+            } finally {
+                _loadingAll.value = false
+                _state.update { it.copy(loadingMore = false) }
             }
         }
     }

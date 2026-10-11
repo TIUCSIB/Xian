@@ -7,6 +7,8 @@ package dev.avsong.domain
 interface SongRepository {
     suspend fun search(keyword: String, page: Int = 1): PagedResult<Song>
     suspend fun getRanking(): List<Song>
+    /** 热歌榜分页(pn);默认空实现(伪仓库无分页,load-more 自动停)。 */
+    suspend fun getRankingPage(page: Int): List<Song> = emptyList()
 
     /** 首页「推荐」:rcmd 推荐流。 */
     suspend fun getRecommend(): List<Song> = emptyList()
