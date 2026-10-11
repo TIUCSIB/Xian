@@ -48,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -160,15 +161,29 @@ fun PlayerScreen(
 
             Spacer(Modifier.weight(1f))
 
-            // 信息卡:半透明深灰卡(用户要求加点透明感;不 blur,封面隐约透出)
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(cardShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f))
-                    .clickable { showLyric = !showLyric }
-                    .padding(horizontal = 20.dp, vertical = 18.dp),
-            ) {
+            // 信息卡:半透明深灰卡 + 轻度模糊封面(用户要求加一点模糊感)
+            Box(modifier = Modifier.fillMaxWidth().clip(cardShape)) {
+                if (state.artworkUri != null) {
+                    AsyncImage(
+                        model = state.artworkUri,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .matchParentSize()
+                            .blur(10.dp),
+                    )
+                }
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f)),
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showLyric = !showLyric }
+                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                ) {
                 Text(
                     text = state.title ?: "未在播放",
                     style = MaterialTheme.typography.titleLarge,
@@ -218,16 +233,31 @@ fun PlayerScreen(
                     }
                 }
             }
+            }
 
             Spacer(Modifier.height(12.dp))
 
-            // 控制卡:半透明深灰卡 / 模式 | 上一首 | 播放(黄) | 下一首 | 队列
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(cardShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f))
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
+            // 控制卡:半透明深灰卡 + 轻度模糊封面 / 模式 | 上一首 | 播放(黄) | 下一首 | 队列
+            Box(modifier = Modifier.fillMaxWidth().clip(cardShape)) {
+                if (state.artworkUri != null) {
+                    AsyncImage(
+                        model = state.artworkUri,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .matchParentSize()
+                            .blur(10.dp),
+                    )
+                }
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f)),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
@@ -282,13 +312,14 @@ fun PlayerScreen(
                         modifier = Modifier.size(26.dp),
                     )
                 }
-                IconButton(onClick = onQueue, modifier = Modifier.size(44.dp)) {
-                    Icon(
-                        Icons.AutoMirrored.Rounded.PlaylistPlay,
-                        contentDescription = "播放队列",
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
+                    IconButton(onClick = onQueue, modifier = Modifier.size(44.dp)) {
+                        Icon(
+                            Icons.AutoMirrored.Rounded.PlaylistPlay,
+                            contentDescription = "播放队列",
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                    }
                 }
             }
 
