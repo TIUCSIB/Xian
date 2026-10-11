@@ -144,14 +144,6 @@ class PlayerController(private val context: Context) {
     /** 一键清空播放队列:同时停止播放(mini 条随 currentMediaId 置空消失)。 */
     fun clearQueue() = withController { it.clearMediaItems() }
 
-    fun cycleRepeatMode() = withController { ctrl ->
-        ctrl.repeatMode = when (ctrl.repeatMode) {
-            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-            else -> Player.REPEAT_MODE_OFF
-        }
-    }
-
     /** 同步采样进度:仅在已连接时有值,否则 0(供 UI ticker 使用)。 */
     fun currentPosition(): Long =
         controller?.takeIf { it.isConnected }?.currentPosition?.coerceAtLeast(0) ?: 0L

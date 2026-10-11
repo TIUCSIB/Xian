@@ -16,23 +16,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,66 +39,6 @@ import coil3.compose.AsyncImage
 import dev.avsong.player.QueueEntry
 import dev.avsong.ui.common.PlayingEqualizer
 import dev.avsong.ui.common.StateHint
-
-/**
- * 播放队列页(播放页右上入口,带返回键):高亮当前项,点击跳转,尾部 X 移除。
- * 列表本体与「歌单」tab 共用 [QueueContent],只在外壳上区分。
- * (Media3 队列无稳定 id,拖拽排序暂不做——见 ROADMAP 技术债)
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun QueueScreen(
-    queue: List<QueueEntry>,
-    currentIndex: Int,
-    onBack: () -> Unit,
-    onPlayAt: (Int) -> Unit,
-    onRemoveAt: (Int) -> Unit,
-    onMove: (Int, Int) -> Unit,
-) {
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("播放队列", fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.width(8.dp))
-                        // 数量徽章:品牌纯色
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                "${queue.size}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-            )
-        },
-    ) { padding ->
-        QueueContent(
-            queue = queue,
-            currentIndex = currentIndex,
-            onPlayAt = onPlayAt,
-            onRemoveAt = onRemoveAt,
-            onMove = onMove,
-            modifier = Modifier.fillMaxSize().padding(padding),
-        )
-    }
-}
 
 /**
  * 队列列表内容:「歌单」tab 与播放页入口共用(跳转/移除/上下移)。

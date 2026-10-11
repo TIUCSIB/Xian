@@ -80,7 +80,6 @@ import androidx.compose.runtime.remember
 import dev.avsong.ui.common.SongList
 import dev.avsong.ui.common.StateHint
 import dev.avsong.ui.queue.QueueContent
-import dev.avsong.ui.queue.QueueScreen
 import dev.avsong.ui.search.SearchScreen
 
 object Routes {
@@ -90,7 +89,6 @@ object Routes {
     const val MINE = "mine"
     const val PLAYER = "player"
     const val LOGIN = "login"
-    const val QUEUE = "queue"
     const val FOLDER = "library/folder/{folderId}?title={title}"
     const val COLLECTION = "library/collection/{mid}/{seasonId}?title={title}"
 
@@ -405,30 +403,19 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onPlay = { songs, index -> viewModel.playQueue(songs, index) },
                     )
                 }
-                composable(Routes.QUEUE) {
-                    QueueScreen(
-                        queue = state.player.queue,
-                        currentIndex = state.player.currentIndex,
-                        onBack = { navController.popBackStack() },
-                        onPlayAt = viewModel::playAt,
-                        onRemoveAt = viewModel::removeFromQueue,
-                        onMove = viewModel::moveInQueue,
-                    )
-                }
                 composable(Routes.PLAYER) {
                     PlayerScreen(
                         state = state.player,
                         lyric = state.lyric,
                         onBack = { navController.popBackStack() },
-                        onQueue = { navController.navigate(Routes.QUEUE) },
+                        onQueue = { showQueueSheet = true },
                         onFavorite = { showFavoritePicker = true },
                         onAddToQueue = viewModel::addCurrentToQueue,
                         onPlayPause = viewModel::playPause,
+                        onCycleMode = viewModel::cyclePlayMode,
                         onNext = viewModel::next,
                         onPrevious = viewModel::previous,
                         onSeek = viewModel::seekTo,
-                        onShuffle = viewModel::toggleShuffle,
-                        onRepeat = viewModel::cycleRepeat,
                         positionProvider = viewModel::currentPosition,
                     )
                 }

@@ -73,8 +73,7 @@ fun PlayerScreen(
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
-    onShuffle: () -> Unit,
-    onRepeat: () -> Unit,
+    onCycleMode: () -> Unit,
     positionProvider: () -> Long = { state.positionMs },
 ) {
     var position by remember(state.currentMediaId, state.isPlaying) { mutableLongStateOf(state.positionMs) }
@@ -231,12 +230,21 @@ fun PlayerScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                CircleButton(onClick = onShuffle, size = 44) {
+                // 播放模式键:单击循环切换(列表循环→单曲循环→随机→顺序),图标随模式变
+                CircleButton(onClick = onCycleMode, size = 44) {
+                    val (modeIcon, modeDesc) = when {
+                        state.shuffleEnabled -> Icons.Rounded.Shuffle to "随机播放"
+                        state.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE ->
+                            Icons.Rounded.RepeatOne to "单曲循环"
+                        else -> Icons.Rounded.Repeat to "列表循环"
+                    }
                     Icon(
-                        Icons.Rounded.Shuffle,
-                        contentDescription = "随机播放",
+                        modeIcon,
+                        contentDescription = modeDesc,
                         modifier = Modifier.size(20.dp),
-                        tint = if (state.shuffleEnabled) MaterialTheme.colorScheme.primary
+                        tint = if (state.shuffleEnabled ||
+                            state.repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF)
+                            MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -271,15 +279,12 @@ fun PlayerScreen(
                         modifier = Modifier.size(24.dp),
                     )
                 }
-                CircleButton(onClick = onRepeat, size = 44) {
+                // 右端 = 播放队列抽屉(与迷你条同款;循环键已并入左侧模式键)
+                CircleButton(onClick = onQueue, size = 44) {
                     Icon(
-                        imageVector = if (state.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE)
-                            Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-                        contentDescription = "循环模式",
+                        Icons.AutoMirrored.Rounded.PlaylistPlay,
+                        contentDescription = "播放队列",
                         modifier = Modifier.size(20.dp),
-                        tint = if (state.repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF)
-                            MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

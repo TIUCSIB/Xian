@@ -357,15 +357,6 @@ class MainViewModel(
     fun next() = playerController.skipToNext()
     fun previous() = playerController.skipToPrevious()
     fun seekTo(ms: Long) = playerController.seekTo(ms)
-    fun toggleShuffle() {
-        val enable = !_state.value.player.shuffleEnabled
-        playerController.setShuffle(enable)
-        // 同 cyclePlayMode:开随机时把单曲循环拉回列表循环,避免「随机+单曲循环」死循环
-        if (enable && _state.value.player.repeatMode == Player.REPEAT_MODE_ONE) {
-            playerController.setRepeatMode(Player.REPEAT_MODE_ALL)
-        }
-    }
-    fun cycleRepeat() = playerController.cycleRepeatMode()
     fun retryPlayback() = playerController.retry()
     fun playAt(index: Int) = playerController.playAt(index)
 
