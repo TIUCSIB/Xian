@@ -27,6 +27,8 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -73,6 +75,7 @@ import dev.avsong.ui.player.PlayerScreen
 import dev.avsong.ui.queue.PlaylistScreen
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.runtime.remember
 import dev.avsong.ui.common.SongList
 import dev.avsong.ui.common.StateHint
@@ -195,29 +198,23 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                 }
                 when (queueTab) {
                     0 -> {
-                        // 功能条:模式三选(循环/单曲/随机)+ 下载/收藏/清空
+                        // 功能条:单键循环切换播放模式 + 下载/收藏/清空(清空带确认气泡)
+                        val (modeLabel, modeIcon) = when {
+                            state.player.shuffleEnabled -> "随机播放" to Icons.Rounded.Shuffle
+                            state.player.repeatMode == Player.REPEAT_MODE_ONE ->
+                                "单曲循环" to Icons.Rounded.RepeatOne
+                            state.player.repeatMode == Player.REPEAT_MODE_ALL ->
+                                "列表循环" to Icons.Rounded.Repeat
+                            else -> "顺序播放" to Icons.Rounded.MusicNote
+                        }
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(start = 24.dp, end = 16.dp, bottom = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                .padding(start = 24.dp, end = 12.dp, bottom = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            ModeChip("循环", Icons.Rounded.Repeat,
-                                active = state.player.repeatMode == Player.REPEAT_MODE_ALL &&
-                                    !state.player.shuffleEnabled) {
-                                viewModel.setRepeatMode(Player.REPEAT_MODE_ALL)
-                                viewModel.setShuffleMode(false)
-                            }
-                            ModeChip("单曲", Icons.Rounded.RepeatOne,
-                                active = state.player.repeatMode == Player.REPEAT_MODE_ONE &&
-                                    !state.player.shuffleEnabled) {
-                                viewModel.setRepeatMode(Player.REPEAT_MODE_ONE)
-                                viewModel.setShuffleMode(false)
-                            }
-                            ModeChip("随机", Icons.Rounded.Shuffle,
-                                active = state.player.shuffleEnabled) {
-                                viewModel.setShuffleMode(true)
+                            ModeChip(modeLabel, modeIcon, active = true) {
+                                viewModel.cyclePlayMode()
                             }
                             Spacer(Modifier.weight(1f))
                             BarAction(Icons.Rounded.Download, "下载当前歌曲") {
@@ -226,8 +223,33 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                             BarAction(Icons.Rounded.FavoriteBorder, "收藏当前歌曲") {
                                 if (state.player.currentMediaId != null) showFavoritePicker = true
                             }
-                            BarAction(Icons.Rounded.DeleteSweep, "清空播放队列") {
-                                viewModel.clearQueue()
+                            Box {
+                                var showClearConfirm by remember { mutableStateOf(false) }
+                                BarAction(Icons.Rounded.DeleteSweep, "清空播放队列") {
+                                    showClearConfirm = true
+                                }
+                                // 确认气泡:清空是破坏性操作,防误触(用户要求)
+                                DropdownMenu(
+                                    expanded = showClearConfirm,
+                                    onDismissRequest = { showClearConfirm = false },
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("确定清空队列?") },
+                                        onClick = {
+                                            viewModel.clearQueue()
+                                            showClearConfirm = false
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                "取消",
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        },
+                                        onClick = { showClearConfirm = false },
+                                    )
+                                }
                             }
                         }
                         QueueContent(

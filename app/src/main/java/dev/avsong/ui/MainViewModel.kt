@@ -365,9 +365,23 @@ class MainViewModel(
     /** 历史回放:在队列则跳播,否则追加队尾起播(不打乱现有队列)。 */
     fun playFromHistory(song: Song) = playerController.playFromHistory(song.toMediaItem())
 
-    /** 播放模式三态(循环/单曲/随机),抽屉模式条直选。 */
-    fun setRepeatMode(mode: Int) = playerController.setRepeatMode(mode)
-    fun setShuffleMode(enabled: Boolean) = playerController.setShuffle(enabled)
+    /**
+     * 模式单键循环:列表循环 → 单曲循环 → 随机 → 顺序 → 列表循环。
+     * 顺序 = REPEAT_OFF + 关随机(队列播完即止)。
+     */
+    fun cyclePlayMode() {
+        val ps = _state.value.player
+        when {
+            ps.shuffleEnabled -> {
+                playerController.setShuffle(false)
+                playerController.setRepeatMode(Player.REPEAT_MODE_ALL)
+            }
+            ps.repeatMode == Player.REPEAT_MODE_ALL -> playerController.setRepeatMode(Player.REPEAT_MODE_ONE)
+            ps.repeatMode == Player.REPEAT_MODE_ONE -> playerController.setShuffle(true)
+            else -> playerController.setRepeatMode(Player.REPEAT_MODE_ALL)
+        }
+    }
+
     fun clearQueue() = playerController.clearQueue()
 
     /** 下载反馈走 Toast(抽屉是独立窗口,Snackbar 会被盖住)。 */
