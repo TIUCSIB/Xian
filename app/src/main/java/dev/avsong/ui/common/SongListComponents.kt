@@ -55,6 +55,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -301,6 +302,8 @@ fun CoverArt(url: String?) {
             AsyncImage(
                 model = url,
                 contentDescription = null,
+                // Crop:让封面撑满方形、不留白边(B 站封面宽高比不定,不指定会按 Fit 露出底色)
+                contentScale = ContentScale.Crop,
                 modifier = Modifier.size(52.dp).clip(shape),
             )
         } else {

@@ -144,7 +144,7 @@ fun HomeScreen(
             }
         }
 
-        // 「定位当前播放」悬浮圆钮:压在列表右下角(迷你条上方)。
+        // 「定位当前播放」悬浮圆钮:压在列表右下角(迷你条上方),半透明底不抢列表内容。
         // 榜内没有当前曲时不出现——点了也没得定位,不做无用交互。
         if (state.player.currentMediaId != null &&
             state.homeSongs.any { it.mediaId == state.player.currentMediaId }
@@ -152,10 +152,10 @@ fun HomeScreen(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 18.dp, bottom = 18.dp)
-                    .size(42.dp)
+                    .padding(end = 30.dp, bottom = 20.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -166,8 +166,8 @@ fun HomeScreen(
                 Icon(
                     Icons.Rounded.MyLocation,
                     contentDescription = "定位当前播放",
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(22.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }
