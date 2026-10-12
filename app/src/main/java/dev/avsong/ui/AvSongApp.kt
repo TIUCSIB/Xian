@@ -326,6 +326,8 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         else RoundedCornerShape(50),
                         outerPadding = if (showTabs) PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp)
                         else PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                        // 播放键环形进度:定时向控制器同步读位置
+                        positionProvider = viewModel::currentPosition,
                     )
                 }
                 if (showTabs) {
@@ -454,7 +456,6 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                 favoriteRepository = viewModel.favoriteRepository,
                 onCollapse = { showPlayerSheet = false },
                 onQueue = { showQueueSheet = true },
-                onFavorite = { showFavoritePicker = true },
                 onPlayPause = viewModel::playPause,
                 onCycleMode = viewModel::cyclePlayMode,
                 onNext = viewModel::next,
