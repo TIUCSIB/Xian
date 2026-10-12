@@ -2,6 +2,7 @@ package dev.avsong.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PageSize
 import androidx.compose.foundation.pager.rememberPagerState
@@ -20,30 +22,33 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.rounded.AccountCircle
-import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.MusicOff
+import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import dev.avsong.domain.Song
 import dev.avsong.ui.MainUiState
+import dev.avsong.ui.common.FlatRefreshIndicator
 import dev.avsong.ui.common.LoadingHint
 import dev.avsong.ui.common.SongList
 import dev.avsong.ui.common.StateHint
@@ -68,57 +73,101 @@ fun HomeScreen(
     onLogin: () -> Unit,
     onPlayNext: (Song) -> Unit = {},
     onAddToQueue: (Song) -> Unit = {},
+    /** 「定位当前播放」:返回该曲在列表(第 4 首起)中的下标,null = 当前榜里没有这首歌。 */
+    onLocate: suspend () -> Int? = { null },
 ) {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding(),
-    ) {
-        // 精选区在下拉刷新区之外,下拉时不动
-        FeaturedSection(
-            songs = state.homeSongs,
-            loading = state.homeLoading,
-            currentMediaId = state.player.currentMediaId,
-            isPlaying = state.player.isPlaying,
-            onPlay = onPlay,
-            onTogglePlayPause = onPlayPause,
-        )
+    val listState = rememberLazyListState()
+    // 定位序号:自增一次触发一次滚动(同一个目标连点也重新定位)
+    var locateRequest by remember { mutableIntStateOf(0) }
+    LaunchedEffect(locateRequest) {
+        val index = onLocate() ?: return@LaunchedEffect
+        // 前三首在列表里没有对应行,定位到它们时滚回列表顶部即可(卡片就在上方)
+        listState.animateScrollToItem(index.coerceAtLeast(0))
+    }
 
-        val pullState = rememberPullToRefreshState()
-        PullToRefreshBox(
-            // 已有内容时下拉才显示转圈;首次加载的空白交给 LoadingHint,避免两个加载态打架
-            isRefreshing = state.homeLoading && state.homeSongs.isNotEmpty(),
-            onRefresh = onRefresh,
-            state = pullState,
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            indicator = {
-                FlatRefreshIndicator(
-                    pullState,
-                    state.homeLoading && state.homeSongs.isNotEmpty(),
-                    Modifier.align(Alignment.TopCenter),
-                )
-            },
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .statusBarsPadding(),
         ) {
-            when {
-                state.homeNeedsLogin -> LoginRequiredList(onLogin)
-                state.homeLoading && state.homeSongs.isEmpty() ->
-                    LoadingHint("正在加载热歌榜…")
-                state.homeSongs.isEmpty() -> EmptyHomeList()
-                else -> SongList(
-                    songs = state.homeSongs.drop(FEATURED_COUNT),
-                    // 队列仍用整榜,点第 4 行实际入列的是全榜第 4 位
-                    onPlay = { _, index -> onPlay(state.homeSongs, index + FEATURED_COUNT) },
-                    onPlayNext = onPlayNext,
-                    onAddToQueue = onAddToQueue,
-                    showRank = true,
-                    rankOffset = FEATURED_COUNT,
-                    showPlayButton = false,
-                    currentMediaId = state.player.currentMediaId,
-                    isPlaying = state.player.isPlaying,
-                    hasMore = state.homeHasMore,
-                    loadingMore = state.homeLoadingMore,
-                    onLoadMore = onLoadMore,
+            // 精选区在下拉刷新区之外,下拉时不动
+            FeaturedSection(
+                songs = state.homeSongs,
+                loading = state.homeLoading,
+                currentMediaId = state.player.currentMediaId,
+                isPlaying = state.player.isPlaying,
+                onPlay = onPlay,
+                onTogglePlayPause = onPlayPause,
+            )
+
+            val pullState = rememberPullToRefreshState()
+            PullToRefreshBox(
+                // 已有内容时下拉才显示转圈;首次加载的空白交给 LoadingHint,避免两个加载态打架
+                isRefreshing = state.homeLoading && state.homeSongs.isNotEmpty(),
+                onRefresh = onRefresh,
+                state = pullState,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                indicator = {
+                    FlatRefreshIndicator(
+                        pullState,
+                        state.homeLoading && state.homeSongs.isNotEmpty(),
+                        Modifier.align(Alignment.TopCenter),
+                    )
+                },
+            ) {
+                when {
+                    state.homeNeedsLogin -> LoginRequiredList(onLogin)
+                    state.homeLoading && state.homeSongs.isEmpty() ->
+                        LoadingHint("正在加载热歌榜…")
+                    state.homeSongs.isEmpty() -> EmptyHomeList()
+                    else -> SongList(
+                        songs = state.homeSongs.drop(FEATURED_COUNT),
+                        // 队列仍用整榜,点第 4 行实际入列的是全榜第 4 位
+                        onPlay = { _, index -> onPlay(state.homeSongs, index + FEATURED_COUNT) },
+                        onPlayNext = onPlayNext,
+                        onAddToQueue = onAddToQueue,
+                        showRank = true,
+                        rankOffset = FEATURED_COUNT,
+                        showPlayButton = false,
+                        currentMediaId = state.player.currentMediaId,
+                        isPlaying = state.player.isPlaying,
+                        hasMore = state.homeHasMore,
+                        loadingMore = state.homeLoadingMore,
+                        onLoadMore = onLoadMore,
+                        listState = listState,
+                        // 列表顶部留白:定位滚到第 0 行时不贴住精选卡片区
+                        contentTopPadding = 12.dp,
+                    )
+                }
+            }
+        }
+
+        // 「定位当前播放」悬浮圆钮:压在列表右下角(迷你条上方)。
+        // 榜内没有当前曲时不出现——点了也没得定位,不做无用交互。
+        if (state.player.currentMediaId != null &&
+            state.homeSongs.any { it.mediaId == state.player.currentMediaId }
+        ) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 18.dp, bottom = 18.dp)
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { locateRequest++ },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.MyLocation,
+                    contentDescription = "定位当前播放",
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(22.dp),
                 )
             }
         }
@@ -308,44 +357,5 @@ private fun EmptyHomeList() {
 }
 
 /**
- * 纯色扁平下拉指示器:黄底圆 + 深色箭头(随下拉进度旋转)/转圈(刷新中)。
- * 不用 PullToRefreshDefaults.Indicator,因为它带 elevation 阴影,违反「禁阴影」设计约束。
+ * 纯色扁平下拉指示器已抽到 `ui/common/RefreshIndicator.kt`(首页与歌单页共用)。
  */
-@Composable
-private fun FlatRefreshIndicator(
-    state: PullToRefreshState,
-    isRefreshing: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .padding(top = 12.dp)
-            .graphicsLayer {
-                val f = (if (isRefreshing) 1f else state.distanceFraction).coerceIn(0f, 1f)
-                scaleX = f
-                scaleY = f
-                alpha = f
-            }
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.primary),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (isRefreshing) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(20.dp),
-                color = MaterialTheme.colorScheme.onPrimary,
-                strokeWidth = 2.dp,
-            )
-        } else {
-            Icon(
-                Icons.Rounded.ArrowDownward,
-                contentDescription = "下拉刷新",
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier
-                    .size(20.dp)
-                    .graphicsLayer { rotationZ = state.distanceFraction.coerceIn(0f, 1f) * 180f },
-            )
-        }
-    }
-}

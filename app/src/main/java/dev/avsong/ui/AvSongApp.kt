@@ -362,6 +362,8 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onLogin = { navController.navigate(Routes.LOGIN) },
                         onPlayNext = viewModel::playNext,
                         onAddToQueue = viewModel::addToQueue,
+                        // 定位当前播放:整榜下标 - 3(列表是整榜 drop(3)),第 4 首落到列表第 0 行
+                        onLocate = { viewModel.locateInHome()?.let { idx -> (idx - 3).coerceAtLeast(0) } },
                     )
                 }
                 composable(Routes.SEARCH) {
@@ -369,7 +371,8 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         state = state,
                         onQueryChange = viewModel::onQueryChange,
                         onSearch = viewModel::search,
-                        onPlay = { songs, index -> viewModel.playQueue(songs, index) },
+                        // 搜索结果点歌:插到当前曲后立即播,不替换队列(用户指定;长按菜单另有无损插入)
+                        onPlay = { songs, index -> viewModel.playNow(songs[index]) },
                         onLoadMore = viewModel::loadMoreSearch,
                         onHistoryClick = viewModel::searchFromHistory,
                         onHistoryRemove = viewModel::removeHistory,
@@ -448,6 +451,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
             PlayerScreen(
                 state = state.player,
                 lyric = state.lyric,
+                favoriteRepository = viewModel.favoriteRepository,
                 onCollapse = { showPlayerSheet = false },
                 onQueue = { showQueueSheet = true },
                 onFavorite = { showFavoritePicker = true },
