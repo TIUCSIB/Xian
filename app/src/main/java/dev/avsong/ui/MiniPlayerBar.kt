@@ -143,13 +143,13 @@ fun MiniPlayerBar(
                 Icon(
                     imageVector = if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                     contentDescription = if (state.isPlaying) "暂停" else "播放",
-                    // 与队列图标同为 22dp;环收紧到 28dp 贴着它,整组不压过队列钮(用户要求两者观感一致)
-                    modifier = Modifier.size(22.dp),
+                    // 图标 18dp + 环 22dp:环的外径 = 队列图标的占位(都是 22dp),整组不再压过队列钮
+                    modifier = Modifier.size(18.dp),
                 )
             }
             // 环压在裸图标外圈:底轨 + 进度弧(纯描边,无填充无阴影)
-            Canvas(Modifier.size(28.dp)) {
-                val sw = 2.dp.toPx()
+            Canvas(Modifier.size(22.dp)) {
+                val sw = 1.5.dp.toPx()
                 val r = (size.minDimension - sw) / 2f
                 val topLeft = Offset(sw / 2f, sw / 2f)
                 drawArc(
