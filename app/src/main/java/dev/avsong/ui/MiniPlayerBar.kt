@@ -143,11 +143,13 @@ fun MiniPlayerBar(
                 Icon(
                     imageVector = if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                     contentDescription = if (state.isPlaying) "暂停" else "播放",
-                    modifier = Modifier.size(24.dp),
+                    // PlayArrow/Pause 的矢量字形留白大(实心部分约占 box 七成),同 dp 会比
+                    // 队列的 PlaylistPlay(几乎填满)显小,故放大到 30dp 让两者可见尺寸对齐
+                    modifier = Modifier.size(30.dp),
                 )
             }
             // 环压在裸图标外圈:底轨 + 进度弧(纯描边,无填充无阴影)
-            Canvas(Modifier.size(33.dp)) {
+            Canvas(Modifier.size(36.dp)) {
                 val sw = 2.dp.toPx()
                 val r = (size.minDimension - sw) / 2f
                 val topLeft = Offset(sw / 2f, sw / 2f)
@@ -169,7 +171,7 @@ fun MiniPlayerBar(
                 }
             }
         }
-        Spacer(Modifier.width(4.dp))
+        Spacer(Modifier.width(2.dp))
 
         IconButton(onClick = onQueue, modifier = Modifier.size(40.dp)) {
             Icon(
