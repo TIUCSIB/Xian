@@ -282,7 +282,8 @@ class MainViewModel(
     /**
      * 「定位当前播放」:在当前首页列表里找当前曲的行下标(UI 的列表是整榜 drop(3),可直接当行号用)。
      * 目标尚未加载时最多续拉 [maxExtraPages] 页(热歌榜/热门支持翻页,歌曲可能在更后面的页)。
-     * 找不到或没有下一页时返回 null 并给一次 Toast —— 榜单是实时榜,刷新后歌曲可能掉出榜外。
+     * 找不到就静默返回 null,不弹提示 —— 按钮本就只在榜内含当前曲时出现,
+     * 走到这里多半是实时榜刷新把歌挤出了已加载页,弹 Toast 只会打扰(用户明确要求去掉)。
      * ⚠ 翻页页码必须每轮从 rankPage/popularPage 取:loadMoreHome 在协程里自增,闭包快照会取重复页。
      */
     suspend fun locateInHome(maxExtraPages: Int = 3): Int? {
@@ -304,11 +305,7 @@ class MainViewModel(
             loaded++
             index = find()
         }
-        if (index < 0) {
-            _queueNotice.value = "当前歌曲不在热歌榜里"
-            return null
-        }
-        return index
+        return index.takeIf { it >= 0 }
     }
 
     fun onQueryChange(query: String) {        _state.update { cur ->
