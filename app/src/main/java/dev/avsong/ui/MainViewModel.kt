@@ -19,9 +19,11 @@ import kotlinx.coroutines.flow.StateFlow
 import dev.avsong.data.BiliConstants
 import dev.avsong.data.BiliHttp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 sealed interface SearchUiState {
     data object Idle : SearchUiState
@@ -277,8 +279,39 @@ class MainViewModel(
         }
     }
 
-    fun onQueryChange(query: String) {
-        _state.update { cur ->
+    /**
+     * 「定位当前播放」:在当前首页列表里找当前曲的行下标(UI 的列表是整榜 drop(3),可直接当行号用)。
+     * 目标尚未加载时最多续拉 [maxExtraPages] 页(热歌榜/热门支持翻页,歌曲可能在更后面的页)。
+     * 找不到或没有下一页时返回 null 并给一次 Toast —— 榜单是实时榜,刷新后歌曲可能掉出榜外。
+     * ⚠ 翻页页码必须每轮从 rankPage/popularPage 取:loadMoreHome 在协程里自增,闭包快照会取重复页。
+     */
+    suspend fun locateInHome(maxExtraPages: Int = 3): Int? {
+        val mediaId = _state.value.player.currentMediaId ?: return null
+        fun find(): Int = _state.value.homeSongs.indexOfFirst { it.mediaId == mediaId }
+        var index = find()
+        var loaded = 0
+        while (index < 0 && loaded < maxExtraPages) {
+            val before = _state.value.homeSongs.size
+            val canPage = _state.value.homeHasMore
+            if (!canPage) break
+            loadMoreHome()
+            withTimeoutOrNull(8_000) {
+                // 等待本页落库(size 变化);接口失败时 loadingMore 归 false 也算结束,避免空转
+                while (_state.value.homeLoadingMore || _state.value.homeSongs.size == before) {
+                    delay(50)
+                }
+            }
+            loaded++
+            index = find()
+        }
+        if (index < 0) {
+            _queueNotice.value = "当前歌曲不在热歌榜里"
+            return null
+        }
+        return index
+    }
+
+    fun onQueryChange(query: String) {        _state.update { cur ->
             // 清空输入 = 放弃本次搜索,回到历史页;否则旧结果会一直挂在列表里
             if (query.isBlank()) cur.copy(query = query, search = SearchUiState.Idle)
             else cur.copy(query = query)
@@ -433,6 +466,15 @@ class MainViewModel(
         if (song.aid > 0) aidCache[song.bvid] = song.aid
         playerController.addToQueue(song.toMediaItem())
         _queueNotice.value = "已加入队列"
+    }
+
+    /**
+     * 「点歌即播,不换队」(搜索结果行点击):插到当前曲后面立即播放,
+     * 已在队列则跳播,不打断/不替换现有队列。
+     */
+    fun playNow(song: Song) {
+        if (song.aid > 0) aidCache[song.bvid] = song.aid
+        playerController.playNow(song.toMediaItem())
     }
 
     suspend fun aidFor(bvid: String): Long =

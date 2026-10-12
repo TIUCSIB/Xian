@@ -53,10 +53,12 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -103,8 +105,11 @@ fun SongList(
     hasMore: Boolean = false,
     loadingMore: Boolean = false,
     onLoadMore: () -> Unit = {},
+    /** 由调用方持有:首页「定位当前播放」要按索引滚列表,内部状态拿不到。 */
+    listState: LazyListState = rememberLazyListState(),
+    /** 列表顶部留白;定位滚动到第 0 行时它能保证该行不贴住上方的精选卡片区。 */
+    contentTopPadding: Dp = 0.dp,
 ) {
-    val listState = rememberLazyListState()
     // 接近底部时触发加载下一页
     LaunchedEffect(listState, hasMore, loadingMore) {
         snapshotFlow {
@@ -114,7 +119,10 @@ fun SongList(
         }.collect { shouldLoad -> if (shouldLoad) onLoadMore() }
     }
 
-    LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {
+    LazyColumn(
+        state = listState,
+        contentPadding = PaddingValues(top = contentTopPadding, bottom = 24.dp),
+    ) {
         itemsIndexed(songs, key = { _, s -> s.mediaId }) { index, song ->
             SongRow(
                 song = song,
@@ -153,6 +161,8 @@ fun SongRow(
     onAddToQueue: ((Song) -> Unit)? = null,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    // 浅色/夜间分支用:主题不带 isDark 标记,以 surface 亮度判定(两套方案的 surface 差异极大)
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -180,7 +190,8 @@ fun SongRow(
             )
         }
 
-        // 当前播放曲:整封面暗色遮罩(跟随封面圆角)+ 居中音波条,歌名高亮
+        // 当前播放曲:整封面暗色遮罩(跟随封面圆角)+ 居中音波条,歌名高亮。
+        // 遮罩深度与标题色分深浅色:浅色下 45% 黑罩把封面糊得太狠、主题色标题发闷,都减档
         Box {
             CoverArt(url = song.coverUrl)
             if (isCurrent && isPlaying) {
@@ -188,7 +199,7 @@ fun SongRow(
                     modifier = Modifier
                         .matchParentSize()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color.Black.copy(alpha = 0.45f)),
+                        .background(Color.Black.copy(alpha = if (dark) 0.45f else 0.12f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     PlayingEqualizer(modifier = Modifier.size(width = 18.dp, height = 14.dp))
@@ -201,8 +212,8 @@ fun SongRow(
             Text(
                 song.title,
                 style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                color = if (isCurrent) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                fontWeight = if (isCurrent && !dark) FontWeight.Bold else FontWeight.Medium,
+                color = if (isCurrent && dark) MaterialTheme.colorScheme.primary else Color.Unspecified,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
