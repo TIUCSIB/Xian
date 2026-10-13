@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,11 +48,14 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,6 +71,7 @@ import kotlin.math.sin
 import dev.avsong.domain.formatClock
 import dev.avsong.player.PlayerState
 import dev.avsong.ui.LyricUiState
+import dev.avsong.ui.library.FavoritePickerDialog
 import kotlinx.coroutines.delay
 import kotlin.math.roundToLong
 
@@ -78,9 +84,9 @@ import kotlin.math.roundToLong
 fun PlayerScreen(
     state: PlayerState,
     lyric: LyricUiState,
+    favoriteRepository: dev.avsong.data.FavoriteRepository,
     onCollapse: () -> Unit,
     onQueue: () -> Unit,
-    onFavorite: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
@@ -90,6 +96,19 @@ fun PlayerScreen(
 ) {
     var position by remember(state.currentMediaId, state.isPlaying) { mutableLongStateOf(state.positionMs) }
     var showLyric by remember { mutableStateOf(false) }
+    // 收藏:爱心回显 + 弹窗开关(声明在函数级,信息卡爱心与弹窗共用)
+    var favChecked by remember(state.currentMediaId) { mutableStateOf(false) }
+    var showFavPicker by remember { mutableStateOf(false) }
+    LaunchedEffect(state.currentMediaId) {
+        val bvid = state.currentMediaId ?: return@LaunchedEffect
+        val aid = runCatching { favoriteRepository.fetchAid(bvid) }.getOrDefault(0L)
+        if (aid > 0) {
+            favChecked = runCatching { favoriteRepository.checkFavorite(aid).isNotEmpty() }
+                .getOrDefault(false)
+        }
+    }
+    // 浅色/夜间分支用:主题不带 isDark 标记,以 surface 亮度判定(两套方案的 surface 差异极大)
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
 
     // 播放中每秒采样一次进度
     LaunchedEffect(state.currentMediaId, state.isPlaying) {
@@ -132,7 +151,7 @@ fun PlayerScreen(
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp),
         ) {
-            // 顶栏:收起箭头 / 标题 / 收藏(裸图标无圆形背景,用户要求)
+            // 顶栏:收起箭头(裸图标)。图标直接坐在封面上,用白色+淡黑描底保证任意封面可读
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -145,21 +164,29 @@ fun PlayerScreen(
                         Icons.Rounded.KeyboardArrowDown,
                         contentDescription = "收起",
                         modifier = Modifier.size(28.dp),
-                        tint = MaterialTheme.colorScheme.onBackground,
+                        // 封面态坐在黑纱上用白色;歌词态背景是纯色底(浅色主题近白),白箭头会隐形
+                        tint = if (showLyric) MaterialTheme.colorScheme.onSurface else Color.White,
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = onFavorite, modifier = Modifier.size(44.dp)) {
-                    Icon(
-                        Icons.Rounded.FavoriteBorder,
-                        contentDescription = "收藏",
-                        modifier = Modifier.size(24.dp),
-                        tint = MaterialTheme.colorScheme.onBackground,
-                    )
-                }
             }
 
-            Spacer(Modifier.weight(1f))
+            // 歌词态:歌词铺满上半区(纯色底上,对比度足够);封面态:留白把信息卡推到底部。
+            // 歌词原先塞在信息卡里 180dp 小框,叠在模糊封面上几乎看不清(浅色主题实测),
+            // 且 LyricView 按整屏设计(160dp 内边距居中),在小框里被裁切——移出卡片才是对的。
+            if (showLyric) {
+                LyricView(
+                    lyric = lyric,
+                    positionMs = position,
+                    onSeek = onSeek,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(top = 8.dp),
+                )
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
 
             // 信息卡:半透明深灰卡 + 轻度模糊封面(用户要求加一点模糊感)
             Box(modifier = Modifier.fillMaxWidth().clip(cardShape)) {
@@ -176,7 +203,7 @@ fun PlayerScreen(
                 Box(
                     Modifier
                         .matchParentSize()
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f)),
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = if (dark) 0.85f else 0.92f)),
                 )
                 Column(
                     modifier = Modifier
@@ -184,53 +211,58 @@ fun PlayerScreen(
                         .clickable { showLyric = !showLyric }
                         .padding(horizontal = 20.dp, vertical = 18.dp),
                 ) {
-                Text(
-                    text = state.title ?: "未在播放",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = state.artist ?: "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(14.dp))
-                if (showLyric) {
-                    LyricView(
-                        lyric = lyric,
-                        positionMs = position,
-                        onSeek = onSeek,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(180.dp),
-                    )
-                } else {
-                    val dur = if (state.durationMs > 0) state.durationMs.toFloat() else 1f
-                    WaveformSeekBar(
-                        progress = (position.toFloat() / dur).coerceIn(0f, 1f),
-                        onSeekFraction = { frac -> onSeek((frac * dur).roundToLong()) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
                         Text(
-                            position.formatClock(),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            text = state.title ?: "未在播放",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
+                        Spacer(Modifier.height(2.dp))
                         Text(
-                            state.durationMs.formatClock(),
-                            style = MaterialTheme.typography.labelMedium,
+                            text = state.artist ?: "",
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    // 收藏键从顶栏移入信息卡(顶栏浅色下在亮封面上看不清)。
+                    // 点击一律弹「收藏到」选择框(勾选=加入/取消勾=移出,收藏夹自选);
+                    // 弹窗「完成」回传勾选状态同步爱心(favChecked/showFavPicker 声明在函数级)
+                    IconButton(onClick = { showFavPicker = true }, modifier = Modifier.size(44.dp)) {
+                        Icon(
+                            if (favChecked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                            contentDescription = if (favChecked) "已收藏,点按管理收藏夹" else "收藏到收藏夹",
+                            tint = if (favChecked) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                // 波形进度条常驻信息卡(歌词态也要有进度);歌词本体已移到上半区
+                val dur = if (state.durationMs > 0) state.durationMs.toFloat() else 1f
+                WaveformSeekBar(
+                    progress = (position.toFloat() / dur).coerceIn(0f, 1f),
+                    onSeekFraction = { frac -> onSeek((frac * dur).roundToLong()) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        position.formatClock(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        state.durationMs.formatClock(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
             }
@@ -252,7 +284,7 @@ fun PlayerScreen(
                 Box(
                     Modifier
                         .matchParentSize()
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f)),
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = if (dark) 0.85f else 0.92f)),
                 )
                 Row(
                     modifier = Modifier
@@ -262,7 +294,7 @@ fun PlayerScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 // 裸图标统一白色(无圆底后不注入会继承到黑色)
-                CompositionLocalProvider(LocalContentColor provides Color.White) {
+                CompositionLocalProvider(LocalContentColor provides if (dark) Color.White else MaterialTheme.colorScheme.onSurface) {
                 // 播放模式键:单击循环切换(列表循环→单曲循环→随机→顺序),图标随模式变
                 IconButton(onClick = onCycleMode, modifier = Modifier.size(44.dp)) {
                     val (modeIcon, modeDesc) = when {
@@ -324,6 +356,19 @@ fun PlayerScreen(
             }
 
             Spacer(Modifier.height(16.dp))
+        }
+
+        // 收藏夹选择弹窗(从 AvSongApp 挪入:爱心状态要在这里同步)
+        if (showFavPicker) {
+            val bvid = state.currentMediaId ?: ""
+            if (bvid.isNotBlank()) {
+                FavoritePickerDialog(
+                    favRepo = favoriteRepository,
+                    bvid = bvid,
+                    onDismissWithState = { favChecked = it },
+                    onDismiss = { showFavPicker = false },
+                )
+            }
         }
     }
 }

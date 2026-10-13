@@ -3,6 +3,9 @@ package dev.avsong.ui.player
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -18,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,52 +76,53 @@ private fun LyricLines(
         }
     }
 
-    // 当前行变化时滚动到中央
-    LaunchedEffect(activeIndex, lines) {
-        scrollCentered(listState, activeIndex)
-    }
-
-    LazyColumn(
-        state = listState,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 160.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        itemsIndexed(lines) { index, line ->
-            val active = index == activeIndex
-            androidx.compose.foundation.layout.Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .padding(horizontal = 28.dp, vertical = 8.dp)
-                    .clickable { onSeek(line.timeMs) },
-            ) {
-                Text(
-                    text = line.text,
-                    textAlign = TextAlign.Center,
-                    fontSize = if (active) 20.sp else 15.sp,
-                    lineHeight = if (active) 28.sp else 21.sp,
-                    color = if (active) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                )
-                // 双语:翻译行(小一号、更淡)
-                line.sub?.let { sub ->
+    // 上下留白 = 半屏:第一行也能滚到中央;偏移量按视口比例算
+    // (旧版写死 160dp padding + -400px 偏移,塞进小框时当前行被顶出可视区,看不清)
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val halfPad = maxHeight / 2
+        val centerOffset = with(LocalDensity.current) { (maxHeight / 2 - 40.dp).toPx().toInt() }
+        LaunchedEffect(activeIndex, lines) {
+            if (!listState.isScrollInProgress) {
+                listState.animateScrollToItem(activeIndex, -centerOffset)
+            }
+        }
+        LazyColumn(
+            state = listState,
+            contentPadding = PaddingValues(vertical = halfPad),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            itemsIndexed(lines) { index, line ->
+                val active = index == activeIndex
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .padding(horizontal = 28.dp, vertical = 8.dp)
+                        .clickable { onSeek(line.timeMs) },
+                ) {
                     Text(
-                        text = sub,
+                        text = line.text,
                         textAlign = TextAlign.Center,
-                        fontSize = if (active) 15.sp else 12.sp,
-                        lineHeight = if (active) 21.sp else 16.sp,
-                        color = if (active) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                        fontSize = if (active) 20.sp else 15.sp,
+                        lineHeight = if (active) 28.sp else 21.sp,
+                        fontWeight = if (active) androidx.compose.ui.text.font.FontWeight.Bold
+                        else androidx.compose.ui.text.font.FontWeight.Normal,
+                        color = if (active) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                     )
+                    // 双语:翻译行(小一号、更淡)
+                    line.sub?.let { sub ->
+                        Text(
+                            text = sub,
+                            textAlign = TextAlign.Center,
+                            fontSize = if (active) 15.sp else 12.sp,
+                            lineHeight = if (active) 21.sp else 16.sp,
+                            color = if (active) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                        )
+                    }
                 }
             }
         }
-    }
-}
-
-/** 把第 index 项滚动到大致垂直居中(简单实现:偏移负半屏)。 */
-private suspend fun scrollCentered(listState: LazyListState, index: Int) {
-    if (!listState.isScrollInProgress) {
-        listState.animateScrollToItem(index, -400)
     }
 }
