@@ -129,8 +129,9 @@ fun PlayerScreen(
                 onClick = {},
             ),
     ) {
-        // 背景层:全幅封面 + 纯色黑纱(半透明实色,非渐变)
-        if (state.artworkUri != null && !showLyric) {
+        // 背景层:全幅封面 + 纯色黑纱(半透明实色,非渐变)。
+        // 封面态/歌词态共用 —— 两种状态只差在中间那张进度卡上,背景不换(用户要求)
+        if (state.artworkUri != null) {
             AsyncImage(
                 model = state.artworkUri,
                 contentDescription = null,
@@ -163,20 +164,22 @@ fun PlayerScreen(
                         Icons.Rounded.KeyboardArrowDown,
                         contentDescription = "收起",
                         modifier = Modifier.size(28.dp),
-                        // 封面态坐在黑纱上用白色;歌词态背景是纯色底(浅色主题近白),白箭头会隐形
-                        tint = if (showLyric) MaterialTheme.colorScheme.onSurface else Color.White,
+                        // 坐在封面黑纱上用白色;无封面时退回主题底,改用 onSurface
+                        tint = if (state.artworkUri != null) Color.White
+                        else MaterialTheme.colorScheme.onSurface,
                     )
                 }
                 Spacer(Modifier.weight(1f))
             }
 
-            // 歌词态:歌词铺满上半区(纯色底上,对比度足够),信息卡整个隐藏,
+            // 歌词态:歌词铺满上半区(坐在封面黑纱上,用白色系文字),信息卡整个隐藏,
             // 点歌词空白处切回封面(歌词行本身的点击仍是 seek);封面态:留白把信息卡推到底部。
             if (showLyric) {
                 LyricView(
                     lyric = lyric,
                     positionMs = position,
                     onSeek = onSeek,
+                    onArtwork = state.artworkUri != null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)

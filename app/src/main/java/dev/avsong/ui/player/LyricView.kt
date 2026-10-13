@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -31,6 +32,8 @@ import dev.avsong.ui.LyricUiState
 
 /**
  * 歌词视图:当前行高亮放大,自动滚动居中;点击某行 seek 到该时间点。
+ * [onArtwork] = 歌词坐在封面黑纱上(播放页统一背景),文字用白色系;
+ * 无封面时退回主题纯色底,用主题 onSurface 系。
  */
 @Composable
 fun LyricView(
@@ -38,22 +41,35 @@ fun LyricView(
     positionMs: Long,
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier,
+    onArtwork: Boolean = false,
 ) {
+    val activeColor = if (onArtwork) Color.White else MaterialTheme.colorScheme.onSurface
+    val inactiveColor = if (onArtwork) Color.White.copy(alpha = 0.55f)
+    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+    val subActiveColor = if (onArtwork) Color.White.copy(alpha = 0.8f)
+    else MaterialTheme.colorScheme.onSurfaceVariant
+    val subInactiveColor = if (onArtwork) Color.White.copy(alpha = 0.4f)
+    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+    val hintColor = if (onArtwork) Color.White.copy(alpha = 0.7f)
+    else MaterialTheme.colorScheme.onSurfaceVariant
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         when (lyric) {
             LyricUiState.None -> Text(
                 "暂无歌词",
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = hintColor,
             )
 
             LyricUiState.Loading -> Text(
                 "歌词加载中…",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = hintColor,
             )
 
-            is LyricUiState.Ready -> LyricLines(lyric.lines, positionMs, onSeek)
+            is LyricUiState.Ready -> LyricLines(
+                lyric.lines, positionMs, onSeek,
+                activeColor, inactiveColor, subActiveColor, subInactiveColor,
+            )
         }
     }
 }
@@ -63,6 +79,10 @@ private fun LyricLines(
     lines: List<LyricLine>,
     positionMs: Long,
     onSeek: (Long) -> Unit,
+    activeColor: Color,
+    inactiveColor: Color,
+    subActiveColor: Color,
+    subInactiveColor: Color,
 ) {
     val listState = rememberLazyListState()
 
@@ -111,8 +131,7 @@ private fun LyricLines(
                         lineHeight = if (active) 28.sp else 21.sp,
                         fontWeight = if (active) androidx.compose.ui.text.font.FontWeight.Bold
                         else androidx.compose.ui.text.font.FontWeight.Normal,
-                        color = if (active) MaterialTheme.colorScheme.onSurface
-                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                        color = if (active) activeColor else inactiveColor,
                     )
                     // 双语:翻译行(小一号、更淡)
                     line.sub?.let { sub ->
@@ -121,8 +140,7 @@ private fun LyricLines(
                             textAlign = TextAlign.Center,
                             fontSize = if (active) 15.sp else 12.sp,
                             lineHeight = if (active) 21.sp else 16.sp,
-                            color = if (active) MaterialTheme.colorScheme.onSurfaceVariant
-                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                            color = if (active) subActiveColor else subInactiveColor,
                         )
                     }
                 }
