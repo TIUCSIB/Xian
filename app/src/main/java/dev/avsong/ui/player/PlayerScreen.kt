@@ -130,7 +130,8 @@ fun PlayerScreen(
             ),
     ) {
         // 背景层:全幅封面 + 纯色黑纱(半透明实色,非渐变)。
-        // 封面态/歌词态共用 —— 两种状态只差在中间那张进度卡上,背景不换(用户要求)
+        // 封面态/歌词态共用 —— 两种状态只差在中间那张进度卡上,背景不换(用户要求);
+        // 但歌词态黑纱加深(0.55→0.78),亮封面(录音棚/暖色实拍)会把白字歌词吃掉看不清(用户实测)
         if (state.artworkUri != null) {
             AsyncImage(
                 model = state.artworkUri,
@@ -138,7 +139,7 @@ fun PlayerScreen(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)))
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (showLyric) 0.78f else 0.55f)))
         } else {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
         }
