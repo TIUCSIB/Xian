@@ -1,7 +1,9 @@
 package dev.avsong.ui.home
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,6 +28,10 @@ import androidx.compose.material.icons.rounded.MusicOff
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.PlaylistAdd
+import androidx.compose.material.icons.rounded.Queue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -35,6 +41,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -100,6 +107,8 @@ fun HomeScreen(
                 isPlaying = state.player.isPlaying,
                 onPlay = onPlay,
                 onTogglePlayPause = onPlayPause,
+                onPlayNext = onPlayNext,
+                onAddToQueue = onAddToQueue,
             )
 
             val pullState = rememberPullToRefreshState()
@@ -200,6 +209,8 @@ private fun FeaturedSection(
     isPlaying: Boolean,
     onPlay: (List<Song>, Int) -> Unit,
     onTogglePlayPause: () -> Unit,
+    onPlayNext: (Song) -> Unit,
+    onAddToQueue: (Song) -> Unit,
 ) {
     // 首次加载(还没有任何歌曲)只留空,卡片依赖歌曲封面,数据到了再渲染
     if (loading && songs.isEmpty()) return
@@ -252,6 +263,8 @@ private fun FeaturedSection(
                     if (featured[page].mediaId == currentMediaId) onTogglePlayPause()
                     else onPlay(songs, page)
                 },
+                onPlayNext = onPlayNext,
+                onAddToQueue = onAddToQueue,
             )
         }
     }
@@ -260,22 +273,31 @@ private fun FeaturedSection(
 /**
  * 单张精选卡:封面铺满圆角卡,右下播放键是唯一控件 ——
  * 当前曲在播时显示暂停态(点击暂停),否则显示播放态(点击从该曲入列整榜)。
+ * 长按 = 弹「下一首播放/加入队列」菜单(与下方列表行同一套无损插入入口,
+ * 前三首只在卡里出现,不补这里就没有别的入口了)。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FeaturedSongCard(
     song: Song,
     isCurrent: Boolean,
     isPlaying: Boolean,
     onClick: () -> Unit,
+    onPlayNext: (Song) -> Unit,
+    onAddToQueue: (Song) -> Unit,
 ) {
     val playingThis = isCurrent && isPlaying
+    var menuExpanded by remember { mutableStateOf(false) }
     Box(
         Modifier
             .fillMaxWidth()
             .height(CARD_H)
             .clip(RoundedCornerShape(20.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { menuExpanded = true },
+            ),
     ) {
         if (song.coverUrl != null) {
             AsyncImage(
@@ -314,6 +336,29 @@ private fun FeaturedSongCard(
                 .padding(14.dp)
                 .size(32.dp),
         )
+        if (menuExpanded) {
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("下一首播放") },
+                    leadingIcon = { Icon(Icons.Rounded.Queue, null) },
+                    onClick = {
+                        menuExpanded = false
+                        onPlayNext(song)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("加入队列") },
+                    leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, null) },
+                    onClick = {
+                        menuExpanded = false
+                        onAddToQueue(song)
+                    },
+                )
+            }
+        }
     }
 }
 
