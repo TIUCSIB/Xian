@@ -52,7 +52,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -182,25 +181,19 @@ fun PlayerScreen(
                         .fillMaxWidth()
                         .weight(1f)
                         .padding(top = 8.dp)
-                        .clickable { showLyric = false },
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { showLyric = false },
                 )
             } else {
                 Spacer(Modifier.weight(1f))
             }
 
-            // 信息卡:半透明深灰卡 + 轻度模糊封面(用户要求加一点模糊感);歌词态不显示
+            // 信息卡:半透明纯色卡(卡内不再各铺一份模糊封面——两张卡各裁一块封面,
+            // 用户反馈「背景是单独的」;去掉后统一透出面板的全幅封面底);歌词态不显示
             if (!showLyric) {
             Box(modifier = Modifier.fillMaxWidth().clip(cardShape)) {
-                if (state.artworkUri != null) {
-                    AsyncImage(
-                        model = state.artworkUri,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .matchParentSize()
-                            .blur(3.dp),
-                    )
-                }
                 Box(
                     Modifier
                         .matchParentSize()
@@ -209,7 +202,10 @@ fun PlayerScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { showLyric = !showLyric }
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { showLyric = !showLyric }
                         .padding(horizontal = 20.dp, vertical = 18.dp),
                 ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -271,18 +267,8 @@ fun PlayerScreen(
 
             Spacer(Modifier.height(12.dp))
 
-            // 控制卡:半透明深灰卡 + 轻度模糊封面 / 模式 | 上一首 | 播放(黄) | 下一首 | 队列
+            // 控制卡:半透明纯色卡(同信息卡,卡内不再各铺模糊封面) / 模式 | 上一首 | 播放(黄) | 下一首 | 队列
             Box(modifier = Modifier.fillMaxWidth().clip(cardShape)) {
-                if (state.artworkUri != null) {
-                    AsyncImage(
-                        model = state.artworkUri,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .matchParentSize()
-                            .blur(3.dp),
-                    )
-                }
                 Box(
                     Modifier
                         .matchParentSize()

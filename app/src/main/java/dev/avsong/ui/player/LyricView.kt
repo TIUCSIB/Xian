@@ -2,6 +2,7 @@ package dev.avsong.ui.player
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -98,7 +99,10 @@ private fun LyricLines(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .padding(horizontal = 28.dp, vertical = 8.dp)
-                        .clickable { onSeek(line.timeMs) },
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { onSeek(line.timeMs) },
                 ) {
                     Text(
                         text = line.text,
