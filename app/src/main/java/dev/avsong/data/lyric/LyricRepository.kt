@@ -17,10 +17,15 @@ import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 歌词多源(借鉴 BiliTune):
- * 1. B 站视频字幕(/x/player/v2 → subtitle_url;登录 Cookie 已在 BiliHttp)——翻唱/搬运最准
- * 2. bgm_info 元数据(视频自带 BGM 标题/歌手)增强第三方搜索
- * 3. 网易云公开接口:多候选查询(清洗标题 × 歌手变体)+ 时长校验,取第一个靠谱结果
+ * 歌词多源:
+ * 1. 网易云公开接口:多候选查询(清洗标题 × 歌手变体)+ 时长校验,取第一个靠谱结果
+ * 2. B 站视频字幕(/x/player/v2 → subtitle_url)兜底 —— 翻唱/搬运网易云没有时才有
+ * 3. bgm_info 元数据(视频自带 BGM 标题/歌手)增强第三方搜索
+ *
+ * ⚠ 网易云必须排在 B 站字幕前面(2026-10-13 调整):B 站 AI 字幕是对着**视频音轨**转写的,
+ * 带口播/解说的音乐视频会把「这个大家都知道/但是呢…」这类说话当成歌词(用户实测:Dear D
+ * 显示成讲新能源汽车泄压阀)。网易云有严格时长校验,命中即真歌词;只有搜不到(翻唱/小众)
+ * 才轮到 B 站字幕——它至少时间轴和视频对齐。
  *
  * 结果按 bvid 缓存(含"无歌词"负缓存)。
  */
@@ -74,12 +79,7 @@ class LyricRepository {
         // 上下文只取一次:view(cid)+ player/v2(subtitles + bgm_info)
         val ctx = runCatching { biliContext(bvid) }.getOrNull()
 
-        // 源 1:B 站字幕
-        ctx?.let { c ->
-            c.subtitleLines.takeIf { it.isNotEmpty() }?.let { return it }
-        }
-
-        // 源 2:网易云,多候选(bgm 标题优先,其次清洗标题 × 歌手变体),带时长校验
+        // 源 1:网易云,多候选(bgm/《》提取/清洗标题 × 歌手变体),带时长校验 —— 命中即真歌词
         val candidates = buildQueries(title, artist, ctx?.bgmTitle, ctx?.bgmSinger)
         for (q in candidates) {
             val song = neteaseSearch(q).firstOrNull { s ->
@@ -91,6 +91,13 @@ class LyricRepository {
             // 有翻译则按时间戳近似对齐合并(网易云 tlyric 时间轴常与原文错位)
             return if (tlyric != null) mergeTranslation(lines, parseLrc(tlyric)) else lines
         }
+
+        // 源 2:B 站字幕兜底 —— 翻唱/搬运网易云搜不到时才用(时间轴和视频对齐,
+        // 但口播视频会转出说话当歌词,故排在网易云之后,见类注释)
+        ctx?.let { c ->
+            c.subtitleLines.takeIf { it.isNotEmpty() }?.let { return it }
+        }
+
         return emptyList()
     }
 
@@ -148,6 +155,9 @@ class LyricRepository {
     internal fun buildQueries(title: String, artist: String, bgmTitle: String?, bgmSinger: String?): List<String> {
         val titles = buildList {
             bgmTitle?.let { add(it) }
+            // 「"歌词片段"-歌手《歌名》」式搬运标题:《》里才是真歌名(cleanTitle 会把尾巴整段砍掉,
+            // 反而丢了歌名),单独提取作高优先候选
+            Regex("《(.+?)》").find(title)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }?.let { add(it) }
             add(title)
             title.cleanTitle().let { if (it != title) add(it) }
         }.distinct()
