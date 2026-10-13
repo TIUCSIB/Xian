@@ -171,9 +171,8 @@ fun PlayerScreen(
                 Spacer(Modifier.weight(1f))
             }
 
-            // 歌词态:歌词铺满上半区(纯色底上,对比度足够);封面态:留白把信息卡推到底部。
-            // 歌词原先塞在信息卡里 180dp 小框,叠在模糊封面上几乎看不清(浅色主题实测),
-            // 且 LyricView 按整屏设计(160dp 内边距居中),在小框里被裁切——移出卡片才是对的。
+            // 歌词态:歌词铺满上半区(纯色底上,对比度足够),信息卡整个隐藏,
+            // 点歌词空白处切回封面(歌词行本身的点击仍是 seek);封面态:留白把信息卡推到底部。
             if (showLyric) {
                 LyricView(
                     lyric = lyric,
@@ -182,13 +181,15 @@ fun PlayerScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(top = 8.dp),
+                        .padding(top = 8.dp)
+                        .clickable { showLyric = false },
                 )
             } else {
                 Spacer(Modifier.weight(1f))
             }
 
-            // 信息卡:半透明深灰卡 + 轻度模糊封面(用户要求加一点模糊感)
+            // 信息卡:半透明深灰卡 + 轻度模糊封面(用户要求加一点模糊感);歌词态不显示
+            if (!showLyric) {
             Box(modifier = Modifier.fillMaxWidth().clip(cardShape)) {
                 if (state.artworkUri != null) {
                     AsyncImage(
@@ -264,6 +265,7 @@ fun PlayerScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
             }
             }
 
