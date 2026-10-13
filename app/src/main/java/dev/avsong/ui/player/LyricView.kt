@@ -1,6 +1,5 @@
 package dev.avsong.ui.player
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -17,23 +16,31 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.avsong.data.lyric.LyricLine
 import dev.avsong.ui.LyricUiState
+import kotlin.math.abs
 
 /**
  * 歌词视图:当前行高亮放大,自动滚动居中;点击某行 seek 到该时间点。
  * [onArtwork] = 歌词坐在封面黑纱上(播放页统一背景),文字用白色系;
  * 无封面时退回主题纯色底,用主题 onSurface 系。
+ *
+ * 滚动带「圆柱弧度」:离中心越远的行 rotationX 越大、越透明、略缩小
+ * (graphicsLayer 里读 layoutInfo,只重绘不重组;用户要求的弧形观感,
+ * 边缘透明即「还没滚进来先淡着」)。
  */
 @Composable
 fun LyricView(
@@ -86,30 +93,31 @@ private fun LyricLines(
 ) {
     val listState = rememberLazyListState()
 
-    // 当前行 = 时间 ≤ position 的最后一行
-    val activeIndex by remember(lines) {
-        derivedStateOf {
-            var idx = 0
-            for (i in lines.indices) {
-                if (lines[i].timeMs <= positionMs) idx = i else break
-            }
-            idx
+    // 当前行 = 时间 ≤ position 的最后一行。
+    // ⚠ 不能用 derivedStateOf 包 positionMs —— 它是普通参数不是 State,
+    // derivedStateOf 感知不到它的变化,activeIndex 会永远停在首帧值(踩过:歌词完全不滚)。
+    var activeIndex by remember(lines) { androidx.compose.runtime.mutableIntStateOf(0) }
+    LaunchedEffect(lines, positionMs) {
+        var idx = 0
+        for (i in lines.indices) {
+            if (lines[i].timeMs <= positionMs) idx = i else break
         }
+        activeIndex = idx
     }
 
-    // 上下留白 = 半屏:第一行也能滚到中央;偏移量按视口比例算
-    // (旧版写死 160dp padding + -400px 偏移,塞进小框时当前行被顶出可视区,看不清)
+    // 当前行变化时滚动到中央(用户手动滚动中不打断)
+    val density = LocalDensity.current
+    LaunchedEffect(activeIndex, lines) {
+        if (listState.isScrollInProgress) return@LaunchedEffect
+        // 行高约 80dp(双语当前行),偏移半行高让当前行中心≈视口中心
+        val halfLine = with(density) { 40.dp.toPx().toInt() }
+        listState.animateScrollToItem(activeIndex, -halfLine)
+    }
+
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val halfPad = maxHeight / 2
-        val centerOffset = with(LocalDensity.current) { (maxHeight / 2 - 40.dp).toPx().toInt() }
-        LaunchedEffect(activeIndex, lines) {
-            if (!listState.isScrollInProgress) {
-                listState.animateScrollToItem(activeIndex, -centerOffset)
-            }
-        }
         LazyColumn(
             state = listState,
-            contentPadding = PaddingValues(vertical = halfPad),
+            contentPadding = PaddingValues(vertical = maxHeight / 2),
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.fillMaxSize(),
         ) {
@@ -118,6 +126,29 @@ private fun LyricLines(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
+                        .graphicsLayer {
+                            // 距视口中心的归一化偏移(-1..1):越远越斜、越淡、越小 → 圆柱感
+                            val info = listState.layoutInfo
+                            val vpCenter =
+                                (info.viewportStartOffset + info.viewportEndOffset) / 2f
+                            val half =
+                                (info.viewportEndOffset - info.viewportStartOffset) / 2f
+                            val item =
+                                info.visibleItemsInfo.firstOrNull { it.index == index }
+                            if (item != null && half > 0f) {
+                                val d =
+                                    ((item.offset + item.size / 2f) - vpCenter) / half
+                                rotationX = (d * 26f).coerceIn(-40f, 40f)
+                                // 透视相机距离:graphicsLayer 的 lambda 是 Density,直接换算 dp
+                                cameraDistance = 12.dp.toPx()
+                                val f = abs(d).coerceIn(0f, 1f)
+                                alpha = 1f - f * 0.72f
+                                scaleX = 1f - f * 0.08f
+                                scaleY = scaleX
+                            } else {
+                                alpha = 0.28f
+                            }
+                        }
                         .padding(horizontal = 28.dp, vertical = 8.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
@@ -129,8 +160,7 @@ private fun LyricLines(
                         textAlign = TextAlign.Center,
                         fontSize = if (active) 20.sp else 15.sp,
                         lineHeight = if (active) 28.sp else 21.sp,
-                        fontWeight = if (active) androidx.compose.ui.text.font.FontWeight.Bold
-                        else androidx.compose.ui.text.font.FontWeight.Normal,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
                         color = if (active) activeColor else inactiveColor,
                     )
                     // 双语:翻译行(小一号、更淡)
