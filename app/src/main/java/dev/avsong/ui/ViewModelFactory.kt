@@ -104,6 +104,8 @@ private class CollectionContentViewModelFactory(
             mid,
             seasonId,
             app.playerController,
+            app.favoriteRepository,
+            app.collectionStore,
         ) as T
     }
 }

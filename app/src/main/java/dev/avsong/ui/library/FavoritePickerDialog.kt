@@ -47,6 +47,8 @@ fun FavoritePickerDialog(
     favRepo: FavoriteRepository,
     bvid: String,
     onDismiss: () -> Unit,
+    /** 关闭时回传:当前曲是否仍在至少一个收藏夹里,供播放页爱心同步状态。 */
+    onDismissWithState: ((Boolean) -> Unit)? = null,
 ) {
     var folders by remember { mutableStateOf<List<FavoriteRepository.Folder>?>(null) }
     var checked by remember { mutableStateOf(setOf<Long>()) }
@@ -86,7 +88,7 @@ fun FavoritePickerDialog(
                         TextButton(onClick = {
                             if (newTitle.isNotBlank()) {
                                 scope.launch {
-                                    runCatching { favRepo.createFolder(newTitle.trim(), false) }
+                                    runCatching { favRepo.createFolder(newTitle.trim(), "", false) }
                                     newTitle = ""
                                     showCreate = false
                                     reloadTick++
@@ -177,6 +179,11 @@ fun FavoritePickerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+        confirmButton = {
+            TextButton(onClick = {
+                onDismissWithState?.invoke(checked.isNotEmpty())
+                onDismiss()
+            }) { Text("完成") }
+        },
     )
 }

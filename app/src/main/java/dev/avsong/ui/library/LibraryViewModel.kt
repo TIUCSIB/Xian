@@ -28,10 +28,15 @@ class LibraryViewModel(
         val subscribed: List<FavoriteRepository.Folder> = emptyList(),
         val loading: Boolean = true,
         val error: String? = null,
-        // ---- UP 主合集(本地保存)----
+        // ---- UP 主合集 ----
+        /** 本地订阅(粘贴链接添加,DataStore)。 */
         val collections: List<SavedCollection> = emptyList(),
+        /** B 站账号「我追的合集」(collected/list type=21;未登录为空)。 */
+        val followedSeasons: List<SavedCollection> = emptyList(),
         val addingCollection: Boolean = false,
         val collectionError: String? = null,
+        /** 收藏夹操作(删除等)的失败提示;成功或下次刷新时清空。 */
+        val actionError: String? = null,
     )
 
     private val _state = MutableStateFlow(UiState())
@@ -47,30 +52,56 @@ class LibraryViewModel(
         viewModelScope.launch { collectionStore.load() }
     }
 
+    /** 首次加载是否已完成(用于「返回本页时刷新」:首载由 init 负责,避免双请求)。 */
+    private var loadedOnce = false
+
+    /** 返回歌单页时同步状态(取消订阅/删除收藏夹后卡片要立刻消失);首载不重复请求。 */
+    fun refreshIfLoaded() {
+        if (loadedOnce) refresh()
+    }
+
     fun refresh() {
         viewModelScope.launch {
-            _state.update { it.copy(loading = true, error = null) }
+            _state.update { it.copy(loading = true, error = null, actionError = null) }
             try {
                 val mine = favRepo.myFolders()
                 val sub = runCatching { favRepo.subscribedFolders() }.getOrDefault(emptyList())
-                _state.update { it.copy(folders = mine, subscribed = sub, loading = false) }
+                // 我追的合集:未登录/接口失败不阻塞整页,退化为只显示本地订阅
+                val followed = runCatching { favRepo.followedSeasons() }
+                    .getOrDefault(emptyList())
+                    .map { SavedCollection(it.mid, it.seasonId, it.title, it.cover, it.total) }
+                _state.update {
+                    it.copy(
+                        folders = mine,
+                        subscribed = sub,
+                        followedSeasons = followed,
+                        loading = false,
+                    )
+                }
             } catch (e: Exception) {
                 _state.update { it.copy(loading = false, error = e.message ?: "加载失败(需登录)") }
             }
+            loadedOnce = true
         }
     }
 
-    fun createFolder(title: String, isPrivate: Boolean) {
+    fun createFolder(title: String, intro: String, isPrivate: Boolean) {
         viewModelScope.launch {
-            runCatching { favRepo.createFolder(title, isPrivate) }
+            runCatching { favRepo.createFolder(title, intro, isPrivate) }
             refresh()
         }
     }
 
+    /** 删除收藏夹(B 站远端删除)。失败不再静默:写进 actionError,页面就地提示。 */
     fun deleteFolder(folderId: Long) {
         viewModelScope.launch {
-            runCatching { favRepo.deleteFolder(folderId) }
-            refresh()
+            try {
+                favRepo.deleteFolder(folderId)
+                _state.update { it.copy(actionError = null) }
+                refresh()
+            } catch (e: Exception) {
+                _state.update { it.copy(actionError = "删除失败:${e.message}") }
+            }
         }
     }
 
@@ -112,8 +143,16 @@ class LibraryViewModel(
         }
     }
 
-    fun removeCollection(mid: Long, seasonId: Long) {
-        viewModelScope.launch { collectionStore.remove(mid, seasonId) }
+    /**
+     * 取消订阅合集:先尽力取消 B 站的「追合集」(未追过会报错,忽略),
+     * 再移除本地订阅并刷新——保证取消后不会因为 B 站还在追而"复活"。
+     */
+    fun unsubscribeCollection(collection: SavedCollection) {
+        viewModelScope.launch {
+            runCatching { favRepo.unfavSeason(collection.seasonId) }
+            collectionStore.remove(collection.mid, collection.seasonId)
+            refresh()
+        }
     }
 
     fun clearCollectionError() {
@@ -134,6 +173,8 @@ class FolderContentViewModel(
         val loading: Boolean = true,
         val loadingMore: Boolean = false,
         val error: String? = null,
+        /** 删除收藏夹失败等操作错误(页面弹提示,不占屏)。 */
+        val actionError: String? = null,
     )
 
     private val _state = MutableStateFlow(UiState())
@@ -215,6 +256,22 @@ class FolderContentViewModel(
         }
     }
 
+    /** 删除收藏夹(B 站远端删除,不可撤销)。成功回调 onDeleted(页面返回);失败写 actionError。 */
+    fun deleteFolder(onDeleted: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                favRepo.deleteFolder(folderId)
+                onDeleted()
+            } catch (e: Exception) {
+                _state.update { it.copy(actionError = "删除失败:${e.message}") }
+            }
+        }
+    }
+
+    fun clearActionError() {
+        _state.update { it.copy(actionError = null) }
+    }
+
     /** 从本收藏夹移除(不删原视频)。 */
     fun removeFromFolder(song: Song, onDone: () -> Unit = {}) {
         viewModelScope.launch {
@@ -237,6 +294,8 @@ class CollectionContentViewModel(
     val mid: Long,
     val seasonId: Long,
     private val playerController: PlayerController,
+    private val favRepo: FavoriteRepository,
+    private val collectionStore: CollectionStore,
 ) : ViewModel() {
 
     data class UiState(
@@ -294,17 +353,21 @@ class CollectionContentViewModel(
      */
     fun playWithFill(startIndex: Int, playLoaded: (List<Song>, Int) -> Unit) {
         val s = _state.value
-        if (s.loading || s.loadingAll) return
+        // ⚠ 必须查 _loadingAll(真标记);UiState.loadingAll 没人写,查它=没护栏(实测 978 变 1716)
+        if (s.loading || _loadingAll.value) return
+        // 同步占位:launch 体在极端情况下可能晚于同帧的第二次调用执行
+        _loadingAll.value = true
         viewModelScope.launch {
-            _loadingAll.value = true
             // 1) 已加载部分先播(点哪首从哪首起)
             playLoaded(s.songs, startIndex)
+            // 换队后捕获代次:循环里一旦发现用户又换了播放/清空了队列就中止,别污染新队列
+            val session = playerController.session
             try {
                 var songs = s.songs
                 var page = s.page
                 var hasMore = s.hasMore
                 var failures = 0
-                while (hasMore) {
+                while (hasMore && playerController.session == session) {
                     val result = try {
                         collectionRepo.page(mid, seasonId, page + 1)
                     } catch (e: Exception) {
@@ -328,6 +391,18 @@ class CollectionContentViewModel(
             } finally {
                 _loadingAll.value = false
             }
+        }
+    }
+
+    /**
+     * 取消订阅合集:B 站取消追合集(best-effort——本地订阅但没在 B 站追过时会报错,忽略)
+     * + 移除本地订阅;成功回调 onDone(页面返回歌单页)。
+     */
+    fun unsubscribe(onDone: () -> Unit) {
+        viewModelScope.launch {
+            runCatching { favRepo.unfavSeason(seasonId) }
+            collectionStore.removeBySeasonId(seasonId)
+            onDone()
         }
     }
 

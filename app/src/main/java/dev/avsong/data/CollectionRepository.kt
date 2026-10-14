@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dev.avsong.data.remote.CardResponse
+import dev.avsong.data.remote.FavSeasonInfoResponse
 import dev.avsong.data.remote.SeasonArchivesResponse
 import dev.avsong.domain.Song
 import java.io.IOException
@@ -68,22 +69,24 @@ object CollectionRepository {
     /**
      * 取合集一页。meta 在每一页都会返回,首页顺带当详情用。
      * 条目没有 owner → UP 名按 mid 取一次(card 接口,进程内缓存),整合集共用。
+     * [mid] <= 0 时(「我追的合集」条目可能不带 UP mid)按 season_id 反查一次补上。
      */
     suspend fun page(mid: Long, seasonId: Long, pageNum: Int, pageSize: Int = 20): Page =
         withContext(Dispatchers.IO) {
+            val ownerMid = if (mid > 0) mid else resolveUpperMid(seasonId)
             val resp = getJson(
                 "$baseUrl/x/polymer/web-space/seasons_archives_list" +
-                    "?mid=$mid&season_id=$seasonId&page_num=$pageNum&page_size=$pageSize",
-                referer = "https://space.bilibili.com/$mid/",
+                    "?mid=$ownerMid&season_id=$seasonId&page_num=$pageNum&page_size=$pageSize",
+                referer = "https://space.bilibili.com/$ownerMid/",
             )
             val parsed = json.decodeFromString<SeasonArchivesResponse>(resp)
             if (parsed.code != 0) throw IOException("合集加载失败 ${parsed.code}: ${parsed.message}")
             val data = parsed.data ?: throw IOException("合集不存在或已删除")
-            val upper = upperNameBlocking(mid)
+            val upper = upperNameBlocking(ownerMid)
             Page(
                 meta = data.meta?.let {
                     Meta(
-                        mid = mid,
+                        mid = ownerMid,
                         seasonId = seasonId,
                         title = it.title.ifBlank { it.name }.ifBlank { "未命名合集" },
                         cover = it.cover.fixProtocol(),
@@ -105,6 +108,17 @@ object CollectionRepository {
                 hasMore = (data.page?.total ?: data.meta?.total ?: 0) > pageNum * pageSize,
             )
         }
+
+    /** 按 season_id 反查合集 UP 主(网页端「我追的合集」用的接口,匿名可用)。 */
+    private suspend fun resolveUpperMid(seasonId: Long): Long {
+        val resp = getJson(
+            "$baseUrl/x/space/fav/season/list?season_id=$seasonId&pn=1&ps=1",
+            referer = BiliConstants.REFERER,
+        )
+        val parsed = json.decodeFromString<FavSeasonInfoResponse>(resp)
+        return parsed.data?.info?.upper?.mid?.takeIf { it > 0 }
+            ?: throw IOException("找不到合集作者(season_id=$seasonId)")
+    }
 
     private val upperNames = ConcurrentHashMap<Long, String>()
 
@@ -163,6 +177,11 @@ class CollectionStore(context: Context) {
 
     suspend fun remove(mid: Long, seasonId: Long) {
         persist(_state.value.filterNot { it.mid == mid && it.seasonId == seasonId })
+    }
+
+    /** 按 seasonId 移除(取消订阅用;追合集条目可能没有 mid,按 mid+season 匹配会漏)。 */
+    suspend fun removeBySeasonId(seasonId: Long) {
+        persist(_state.value.filterNot { it.seasonId == seasonId })
     }
 
     private suspend fun persist(list: List<SavedCollection>) {

@@ -21,10 +21,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
@@ -46,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -97,10 +101,13 @@ fun PlaylistDetailContent(
     /** 歌单内搜索:打开搜索时触发「加载全部」(大合集要搜得到就得全量),进度经 [loadingAll]。 */
     loadingAll: Boolean = false,
     onLoadAll: () -> Unit = {},
+    /** 顶栏「⋮」菜单项(如 取消订阅/删除收藏夹);空则不出「⋮」。 */
+    menuActions: List<Pair<String, () -> Unit>> = emptyList(),
 ) {
     // 搜索态:顶栏换成搜索框,列表隐藏头部只渲染过滤结果
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    var moreExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -128,6 +135,27 @@ fun PlaylistDetailContent(
                                 onLoadAll()
                             }) {
                                 Icon(Icons.Rounded.Search, contentDescription = "搜索歌单内歌曲")
+                            }
+                        }
+                        if (menuActions.isNotEmpty()) {
+                            Box {
+                                IconButton(onClick = { moreExpanded = true }) {
+                                    Icon(Icons.Rounded.MoreVert, contentDescription = "更多操作")
+                                }
+                                DropdownMenu(
+                                    expanded = moreExpanded,
+                                    onDismissRequest = { moreExpanded = false },
+                                ) {
+                                    menuActions.forEach { (label, action) ->
+                                        DropdownMenuItem(
+                                            text = { Text(label) },
+                                            onClick = {
+                                                moreExpanded = false
+                                                action()
+                                            },
+                                        )
+                                    }
+                                }
                             }
                         }
                     },
@@ -176,9 +204,28 @@ fun PlaylistDetailContent(
                         info.totalItemsCount > 0 && last >= info.totalItemsCount - 5
                     }.collect { nearEnd -> if (nearEnd) onLoadMore() }
                 }
+                // 「定位当前播放」:当前曲在本歌单里的曲目下标(-1=不在歌单中,钮不出现)
+                val locateIndex = remember(songs, currentMediaId) {
+                    songs.indexOfFirst { it.mediaId == currentMediaId }
+                }
+                var locateTick by remember { mutableIntStateOf(0) }
+                // tick 变化执行滚动:曲目 i 在列表里的 index 是 i+1(index 0 是 header)
+                LaunchedEffect(locateTick) {
+                    if (locateTick > 0 && locateIndex >= 0) {
+                        // 目标超出已加载范围时先连续触发 loadMore 把页拉出来,滚动由 animate 追进
+                        while (locateIndex >= songs.size && hasMore) {
+                            onLoadMore()
+                            kotlinx.coroutines.delay(300)
+                        }
+                        listState.animateScrollToItem(
+                            (locateIndex + 1).coerceAtMost(listState.layoutInfo.totalItemsCount - 1),
+                        )
+                    }
+                }
+                Box(Modifier.fillMaxSize().padding(padding)) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize().padding(padding),
+                    modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 16.dp),
                 ) {
                     item(key = "header") {
@@ -214,6 +261,28 @@ fun PlaylistDetailContent(
                             }
                         }
                     }
+                }
+                if (locateIndex >= 0) {
+                    // 「定位当前播放」悬浮圆钮:压在列表右下角(迷你条上方),与首页同款交互。
+                    // 半透明底不抢列表内容;歌单/合集都可定位——「浏览到几千首找当前曲」是真实痛点。
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 20.dp, bottom = 18.dp)
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                            .clickable { locateTick++ },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Rounded.MyLocation,
+                            contentDescription = "定位当前播放",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
                 }
             }
         }
@@ -378,10 +447,17 @@ private fun NumberedSongRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.width(30.dp), contentAlignment = Alignment.Center) {
-            if (isCurrent) {
-                PlayingEqualizer(Modifier.size(18.dp))
-            } else {
-                Text(
+            when {
+                // 播放中才走音波动画;当前曲但暂停时显示播放三角(与队列抽屉同款,别让暂停装作在播)
+                isCurrent && isPlaying ->
+                    PlayingEqualizer(Modifier.size(width = 18.dp, height = 14.dp))
+                isCurrent -> Icon(
+                    Icons.Rounded.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                else -> Text(
                     if (number < 100) "%02d".format(number) else number.toString(),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

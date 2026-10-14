@@ -1,15 +1,24 @@
 package dev.avsong.ui.library
 
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import dev.avsong.domain.Song
 import dev.avsong.ui.rememberCollectionContentViewModel
 
 /**
  * UP 主合集内容页:布局走共享的 [PlaylistDetailContent](网易云式详情稿,2026-10-11 改版)。
- * 只读(曲目是别人的,无移除);头部数据用合集 meta 的真实封面/标题/UP/总数,
- * UP 名可能拿不到(新版大 mid 的 card 接口不返回),空串时不渲染该行。
+ * 只读(曲目是别人的,无移除);顶栏「⋮」= 取消订阅(确认弹窗:
+ * 真取消 B 站「追合集」+ 移除本地订阅,然后返回歌单页)。
+ * 头部数据用合集 meta 的真实封面/标题/UP/总数,UP 名可能拿不到(新版大 mid 的 card 接口不返回),
+ * 空串时不渲染该行。
  */
 @Composable
 fun CollectionContentScreen(
@@ -29,9 +38,11 @@ fun CollectionContentScreen(
     val state by vm.state.collectAsState()
     // 与播放补全(playWithFill)共用同一个 loadingAll 标记,互相防竞态
     val loadingAll by vm.loadingAll.collectAsState()
+    var showUnsubConfirm by remember { mutableStateOf(false) }
+    val displayTitle = state.title.ifBlank { fallbackTitle }
 
     PlaylistDetailContent(
-        title = state.title.ifBlank { fallbackTitle },
+        title = displayTitle,
         metaLine = if (state.total > 0) "合集 · 共 ${state.total} 个视频" else "合集",
         subtitle = state.upperName,
         cover = state.cover ?: state.songs.firstOrNull()?.coverUrl,
@@ -54,5 +65,23 @@ fun CollectionContentScreen(
         onRemoveSong = null,
         loadingAll = loadingAll,
         onLoadAll = vm::loadAll,
+        menuActions = listOf("取消订阅" to { showUnsubConfirm = true }),
     )
+
+    if (showUnsubConfirm) {
+        AlertDialog(
+            onDismissRequest = { showUnsubConfirm = false },
+            title = { Text("取消订阅合集?") },
+            text = { Text("将取消「$displayTitle」的追合集并从歌单页移除(合集本身不受影响,之后可以重新添加)。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showUnsubConfirm = false
+                    vm.unsubscribe(onDone = onBack)
+                }) { Text("取消订阅", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUnsubConfirm = false }) { Text("再想想") }
+            },
+        )
+    }
 }

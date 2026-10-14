@@ -49,6 +49,14 @@ class PlayerController(private val context: Context) {
     }
 
     /**
+     * 播放代次:每次「换队」(playQueue)或清空自增。后台渐进补全循环靠它判断
+     * 用户是否已经切到别的播放/清空队列——变了就放弃补全,别把上一个歌单的剩余页
+     * 追加进新队列。读取方在换队后捕获 [session] 快照比对。
+     */
+    private var _session = 0
+    val session: Int get() = _session
+
+    /**
      * 整队入列并播放。[startPositionMs] 用于「最近播放」续播:
      * setMediaItems 第三参就是起播位置,比 prepare 后再 seek 更稳(不会先闪一下 0 位置)。
      */
@@ -57,6 +65,7 @@ class PlayerController(private val context: Context) {
         startIndex: Int = 0,
         startPositionMs: Long = 0L,
     ) = withController { ctrl ->
+        _session++
         ctrl.setMediaItems(items, startIndex, startPositionMs)
         ctrl.prepare()
         ctrl.play()
@@ -131,6 +140,33 @@ class PlayerController(private val context: Context) {
     }
 
     /**
+     * 「点歌即播,不换队」:插到当前曲后面并立即播放,队列其余部分原样保留。
+     * 已在队列则直接跳过去播(不重复入列);空队列退化为单曲起播。
+     */
+    fun playNow(item: MediaItem) = withController { ctrl ->
+        val existing = (0 until ctrl.mediaItemCount).firstOrNull {
+            ctrl.getMediaItemAt(it).mediaId == item.mediaId
+        }
+        when {
+            existing != null -> {
+                ctrl.seekTo(existing, 0L)
+                ctrl.play()
+            }
+            ctrl.mediaItemCount == 0 -> {
+                ctrl.setMediaItems(listOf(item), 0, 0L)
+                ctrl.prepare()
+                ctrl.play()
+            }
+            else -> {
+                val target = ctrl.currentMediaItemIndex + 1
+                ctrl.addMediaItem(target, item)
+                ctrl.seekTo(target, 0L)
+                ctrl.play()
+            }
+        }
+    }
+
+    /**
      * 历史回放:曲子已在队列则跳播(不重复入列);队列空则单曲入列;
      * 否则追加到队尾起播 —— 不打乱现有队列。
      */
@@ -160,12 +196,25 @@ class PlayerController(private val context: Context) {
     fun setRepeatMode(mode: Int) = withController { it.repeatMode = mode }
     fun setShuffle(enabled: Boolean) = withController { it.shuffleModeEnabled = enabled }
 
-    /** 一键清空播放队列:同时停止播放(mini 条随 currentMediaId 置空消失)。 */
-    fun clearQueue() = withController { it.clearMediaItems() }
+    /** 一键清空播放队列:同时停止播放(mini 条随 currentMediaId 置空消失);自增 session 中止在跑的补全。 */
+    fun clearQueue() = withController {
+        _session++
+        it.clearMediaItems()
+    }
 
-    /** 批量追加到队尾(合集后台补全队列用;不打断当前播放)。 */
+    /**
+     * 批量追加到队尾(合集/歌单的渐进补全用;不打断当前播放)。
+     * **按 mediaId 去重**:补全循环可能跨页面并发,重复追加会把队列撑爆
+     * (实测 978 首的合集队列涨到 1716 且一路增长)。显式「加入队列」走 addToQueue,不受此限制。
+     */
     fun appendSongsToQueue(items: List<MediaItem>) = withController { ctrl ->
-        if (items.isNotEmpty()) ctrl.addMediaItems(ctrl.mediaItemCount, items)
+        if (items.isEmpty()) return@withController
+        val existing = HashSet<String>(ctrl.mediaItemCount * 2)
+        for (i in 0 until ctrl.mediaItemCount) {
+            existing += ctrl.getMediaItemAt(i).mediaId
+        }
+        val fresh = items.distinctBy { it.mediaId }.filterNot { it.mediaId in existing }
+        if (fresh.isNotEmpty()) ctrl.addMediaItems(ctrl.mediaItemCount, fresh)
     }
 
     /** 同步采样进度:仅在已连接时有值,否则 0(供 UI ticker 使用)。 */

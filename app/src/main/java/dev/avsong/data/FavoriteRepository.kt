@@ -39,6 +39,15 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
         val ownerName: String?,
     )
 
+    /** 我追的合集(B 站「追合集」,不是本地订阅;mid=UP 主,可能为 0 待反查)。 */
+    data class FollowedSeason(
+        val mid: Long,
+        val seasonId: Long,
+        val title: String,
+        val cover: String?,
+        val total: Int,
+    )
+
     data class FolderContents(
         val songs: List<Song>,
         val hasMore: Boolean,
@@ -81,25 +90,71 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
         folders
     }
 
+    /**
+     * 「订阅的收藏夹」(EP「收藏的」)。注意 collected/list 是**混装列表**:
+     * 我追的合集(type=21)和收藏的收藏夹(type=11)在同一份响应里,
+     * 这里只取收藏夹;合集走 [followedSeasons],不然合集会被当收藏夹渲染(点开即错)。
+     */
     suspend fun subscribedFolders(): List<Folder> = withContext(Dispatchers.IO) {
-        val url = "$api/x/v3/fav/folder/collected/list?up_mid=$mid&pn=1&ps=20"
-        decodeFolders(get(url))
+        collectedItems().filter { it.type != TYPE_SEASON }.map(::toFolder)
     }
 
-    private fun decodeFolders(body: String): List<Folder> {
-        val resp = json.decodeFromString<FavFolderListResponse>(body)
-        if (resp.code != 0) throw IOException("收藏夹接口 code=${resp.code}")
-        return resp.data?.list.orEmpty().map { f ->
-            Folder(
-                id = f.id,
+    /**
+     * 「我追的合集」(B 站账号里追更的合集,空间页「我追的合集/收藏夹」同一份数据)。
+     * 合集条目的 id 即 season_id,mid/upper 是 UP 主(归属),用于进合集详情页。
+     */
+    suspend fun followedSeasons(): List<FollowedSeason> = withContext(Dispatchers.IO) {
+        collectedItems().filter { it.type == TYPE_SEASON }.map { f ->
+            FollowedSeason(
+                // 实测合集条目 mid 字段可能缺省,upper.mid 兜底;都没有则 0(进详情页时按 season_id 反查)
+                mid = f.mid.takeIf { it > 0 } ?: f.upper?.mid ?: 0L,
+                seasonId = f.id,
                 title = f.title,
                 cover = f.cover?.fixProtocol(),
-                mediaCount = f.mediaCount,
-                isPrivate = f.attr != 0,
-                ownerMid = f.mid,
-                ownerName = f.upper?.name,
+                total = f.mediaCount,
             )
         }
+    }
+
+    /** collected/list 分页拉全(ps=20,上限 5 页防异常 has_more 死循环)。 */
+    private suspend fun collectedItems(): List<FavFolder> {
+        val out = mutableListOf<FavFolder>()
+        var page = 1
+        while (page <= 5) {
+            val resp = json.decodeFromString<FavFolderListResponse>(
+                get("$api/x/v3/fav/folder/collected/list?up_mid=$mid&pn=$page&ps=20&platform=web"),
+            )
+            if (resp.code != 0) throw IOException("收藏夹接口 code=${resp.code}")
+            val data = resp.data ?: break
+            out += data.list
+            if (!data.hasMore) break
+            page++
+        }
+        return out
+    }
+
+    private fun toFolder(f: FavFolder) = Folder(
+        id = f.id,
+        title = f.title,
+        cover = f.cover?.fixProtocol(),
+        mediaCount = f.mediaCount,
+        isPrivate = f.attr != 0,
+        ownerMid = f.mid,
+        ownerName = f.upper?.name,
+    )
+
+    /**
+     * 取消订阅合集(取消追合集)。未追过时会报错,调用方按 best-effort 处理
+     * (本地入口移除不依赖它成功)。网页端同款:POST /x/v3/fav/season/unfav。
+     */
+    suspend fun unfavSeason(seasonId: Long) = write {
+        val body = postForm(
+            "$api/x/v3/fav/season/unfav",
+            "season_id" to seasonId.toString(),
+            "platform" to "web",
+        )
+        val resp = json.decodeFromString<FavWriteResponse>(body)
+        if (resp.code != 0) throw IOException("取消订阅失败 code=${resp.code} ${resp.message}")
     }
 
     suspend fun folderContents(folderId: Long, page: Int = 1): FolderContents =
@@ -146,11 +201,11 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
 
     // ---------- 写 ----------
 
-    suspend fun createFolder(title: String, isPrivate: Boolean): Long = write {
+    suspend fun createFolder(title: String, intro: String, isPrivate: Boolean): Long = write {
         val body = postForm(
             "$api/x/v3/fav/folder/add",
             "title" to title,
-            "intro" to "",
+            "intro" to intro,
             "privilege" to if (isPrivate) "1" else "0",
         )
         val resp = json.decodeFromString<FavWriteResponse>(body)
@@ -230,6 +285,9 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
 
     private companion object {
         const val api = BiliConstants.HOST_API
+
+        /** collected/list 条目 type:21=合集(追合集),11=收藏夹。 */
+        const val TYPE_SEASON = 21
     }
 }
 

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.MediaMetadata
+import dev.avsong.AvSongApp
 import dev.avsong.data.lyric.LyricLine
 import dev.avsong.data.lyric.LyricRepository
 import dev.avsong.domain.NotLoggedInException
@@ -423,28 +424,82 @@ class MainViewModel(
     }
 
     /**
-     * 歌单卡片右下播放钮:直接播整个歌单(取第一页内容整队入列,后续翻页不自动接)。
+     * 歌单卡片右下播放钮:直接播整个歌单(第一页整队入列立即起播),
+     * 后台继续拉剩余页**逐批追加进队列**(与合集详情页 playWithFill 同一目标:
+     * 队列从 20 首一路长到全量)。用户期间切了别的播放/清空队列则中止补全。
      * 反馈走 queueNotice→Toast(成功不提示,迷你条封面变化本身就是反馈)。
      */
     fun playFolderPlaylist(folderId: Long) {
         viewModelScope.launch {
             try {
-                val songs = favoriteRepository.folderContents(folderId, 1).songs
-                if (songs.isEmpty()) _queueNotice.value = "这个歌单还是空的"
-                else playQueue(songs, 0)
+                val first = favoriteRepository.folderContents(folderId, 1)
+                if (first.songs.isEmpty()) {
+                    _queueNotice.value = "这个歌单还是空的"
+                    return@launch
+                }
+                playQueue(first.songs, 0)
+                val session = playerController.session
+                var songs = first.songs
+                var page = 1
+                var hasMore = first.hasMore
+                var failures = 0
+                while (hasMore && playerController.session == session) {
+                    val result = try {
+                        favoriteRepository.folderContents(folderId, page + 1)
+                    } catch (e: Exception) {
+                        if (++failures < 3) {
+                            delay(1500)
+                            continue
+                        }
+                        break
+                    }
+                    failures = 0
+                    page++
+                    hasMore = result.hasMore
+                    val fresh = result.songs.filter { new -> songs.none { it.bvid == new.bvid } }
+                    if (fresh.isEmpty()) continue
+                    songs = songs + fresh
+                    playerController.appendSongsToQueue(fresh.map { it.toMediaItem() })
+                }
             } catch (e: Exception) {
                 _queueNotice.value = "歌单播放失败:${e.message}"
             }
         }
     }
 
-    /** UP 主合集版:同上,走 seasons_archives_list 第一页。 */
+    /** UP 主合集版:同上(第一页起播 + 后台逐页追加进队列,切歌即中止)。 */
     fun playCollectionPlaylist(mid: Long, seasonId: Long) {
         viewModelScope.launch {
             try {
-                val songs = dev.avsong.data.CollectionRepository.page(mid, seasonId, 1).songs
-                if (songs.isEmpty()) _queueNotice.value = "这个合集还是空的"
-                else playQueue(songs, 0)
+                val first = dev.avsong.data.CollectionRepository.page(mid, seasonId, 1)
+                if (first.songs.isEmpty()) {
+                    _queueNotice.value = "这个合集还是空的"
+                    return@launch
+                }
+                playQueue(first.songs, 0)
+                val session = playerController.session
+                var songs = first.songs
+                var page = 1
+                var hasMore = first.hasMore
+                var failures = 0
+                while (hasMore && playerController.session == session) {
+                    val result = try {
+                        dev.avsong.data.CollectionRepository.page(mid, seasonId, page + 1)
+                    } catch (e: Exception) {
+                        if (++failures < 3) {
+                            delay(1500)
+                            continue
+                        }
+                        break
+                    }
+                    failures = 0
+                    page++
+                    hasMore = result.hasMore
+                    val fresh = result.songs.filter { new -> songs.none { it.bvid == new.bvid } }
+                    if (fresh.isEmpty()) continue
+                    songs = songs + fresh
+                    playerController.appendSongsToQueue(fresh.map { it.toMediaItem() })
+                }
             } catch (e: Exception) {
                 _queueNotice.value = "合集播放失败:${e.message}"
             }
@@ -524,40 +579,64 @@ class MainViewModel(
         _queueNotice.value = null
     }
 
-    /** 下载当前播放歌曲:解析直链 → BiliHttp(自带 Referer)→ 存到 app 外部 Music 目录。 */
-    /** 队列抽屉下载钮:下载当前播放曲。 */
+    /** 队列抽屉下载钮:下载当前播放曲(已下载过的重下=覆盖更新,无害)。 */
     fun downloadCurrentSong(context: Context) {
         val ps = _state.value.player
         val bvid = ps.currentMediaId ?: return
-        downloadSong(context, bvid, ps.title.orEmpty().ifBlank { "audio" })
+        downloadSong(
+            context, bvid,
+            Song(
+                bvid = bvid,
+                title = ps.title.orEmpty().ifBlank { "audio" },
+                artist = ps.artist.orEmpty(),
+                coverUrl = ps.artworkUri,
+                durationSec = if (ps.durationMs > 0) ps.durationMs / 1000 else 0,
+            ),
+        )
     }
 
     /** 歌单详情行菜单「下载」:任意歌曲,不必在播放队列里。 */
-    fun downloadSong(context: Context, song: Song) {
-        downloadSong(context, song.bvid, song.title.ifBlank { "audio" })
-    }
+    fun downloadSong(context: Context, song: Song) = downloadSong(context, song.bvid, song)
 
     /**
      * 下载核心:直链现取(绝不缓存,~3h 过期)→ BiliHttp(自带 Referer)流式存 MUSIC 目录。
+     * 文件名带 bvid 前缀(`<bvid>_<标题>.m4a`):同名歌不再互相覆盖,bvid 即去重键(重下=覆盖更新)。
+     * 落盘成功后写 DownloadedStore 元数据(「已下载」页的数据源)。
      * 反馈走 downloadMessage→Toast(抽屉等独立窗口会盖住 Snackbar)。
      */
-    private fun downloadSong(context: Context, bvid: String, title: String) {
+    private fun downloadSong(context: Context, bvid: String, song: Song) {
         viewModelScope.launch(Dispatchers.IO) {
-            _downloadMessage.value = "开始下载:$title"
+            _downloadMessage.value = "开始下载:${song.title}"
             try {
                 val url = BiliSongRepository.audioUrlBlocking(bvid)
                 val request = okhttp3.Request.Builder().url(url).build()
+                val store = (context.applicationContext as AvSongApp).downloadedStore
+                var fileName = ""
+                var size = 0L
                 BiliHttp.client.newCall(request).execute().use { resp ->
                     if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code}")
-                    val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC)
-                        ?: throw java.io.IOException("外部存储不可用")
-                    val safe = title.replace(Regex("""[\/:*?"<>|]"""), "_").take(80)
-                    val file = java.io.File(dir, "$safe.m4a")
+                    val dir = store.musicDir() ?: throw java.io.IOException("外部存储不可用")
+                    val safe = song.title.replace(Regex("""[\/:*?"<>|]"""), "_").take(80)
+                    val file = java.io.File(dir, "${bvid}_$safe.m4a")
+                    fileName = file.name
                     resp.body?.byteStream()?.use { input ->
                         file.outputStream().use { output -> input.copyTo(output) }
                     } ?: throw java.io.IOException("空响应体")
+                    size = file.length()
                 }
-                _downloadMessage.value = "下载完成:$title"
+                store.add(
+                    dev.avsong.data.DownloadedTrack(
+                        bvid = bvid,
+                        title = song.title,
+                        artist = song.artist,
+                        coverUrl = song.coverUrl,
+                        fileName = fileName,
+                        durationSec = song.durationSec,
+                        sizeBytes = size,
+                        downloadedAt = System.currentTimeMillis(),
+                    ),
+                )
+                _downloadMessage.value = "下载完成:${song.title}"
             } catch (e: Exception) {
                 _downloadMessage.value = "下载失败:${e.message}"
             }

@@ -1,6 +1,7 @@
 package dev.avsong.data
 
 import dev.avsong.data.remote.AudioStream
+import dev.avsong.data.remote.Dash
 import dev.avsong.data.remote.HistoryItem
 import dev.avsong.data.remote.HistoryResponse
 import dev.avsong.data.remote.PlayUrlResponse
@@ -8,6 +9,7 @@ import dev.avsong.data.remote.RankResponse
 import dev.avsong.data.remote.RcmdResponse
 import dev.avsong.data.remote.SearchResponse
 import dev.avsong.data.remote.SpiResponse
+import dev.avsong.ui.settings.SettingsStore
 import dev.avsong.data.remote.VideoItem
 import dev.avsong.data.remote.VideoListResponse
 import dev.avsong.data.remote.ViewData
@@ -217,11 +219,31 @@ object BiliSongRepository : SongRepository {
         val play = json.decodeFromString<PlayUrlResponse>(resp)
         if (play.code != 0) throw IOException("playurl 错误 ${play.code}: ${play.message}")
         val dash = play.data?.dash ?: throw IOException("无可用音频流(可能需要大会员)")
-        // 优先级:FLAC(无损) > 杜比 > audio 里带宽最高(免费 192K=30280)
-        dash.flac?.audio?.takeIf { it.baseUrl.isNotBlank() }?.let { return it }
-        dash.dolby?.audio?.maxByOrNull { it.bandwidth }?.takeIf { it.baseUrl.isNotBlank() }?.let { return it }
-        return dash.audio.maxByOrNull { it.bandwidth }
+        return pickStream(dash)
+    }
+
+    /**
+     * 按用户设置的「默认音质」选流:目标档位没有就取可用档位中最接近(不高于)目标的,
+     * 全都没有再取更高档兜底。FLAC 在 dash.flac;LOSSLESS 目标即 flac,拿不到降级到 192K。
+     * (设置项在 SettingsStore;repository 是 object 单例,直接读它的内存流避免层层传参)
+     */
+    private fun pickStream(dash: Dash): AudioStream {
+        val flac = dash.flac?.audio?.takeIf { it.baseUrl.isNotBlank() }
+        val dolby = dash.dolby?.audio?.maxByOrNull { it.bandwidth }?.takeIf { it.baseUrl.isNotBlank() }
+        val regular = dash.audio.filter { it.baseUrl.isNotBlank() }.ifEmpty { null }
             ?: throw IOException("无可用音频流(可能需要大会员)")
+        val best = regular.maxByOrNull { it.bandwidth }!! // 免费上限 192K=30280
+
+        return when (SettingsStore.state.value.quality) {
+            dev.avsong.ui.settings.SettingsStore.Quality.LOSSLESS -> flac ?: dolby ?: best
+            else -> {
+                val target = SettingsStore.state.value.quality.id
+                // 用户指定档位精确命中(192K=30280 的 id 就是档位)
+                regular.firstOrNull { it.id == target }?.let { return it }
+                // 目标不可用:取 id 不高于目标里的最高档,再兜底最高档
+                regular.filter { it.id <= target }.maxByOrNull { it.id } ?: best
+            }
+        }
     }
 
     // ---------- 搜索 / 榜单 ----------

@@ -63,3 +63,27 @@ data class CardResponse(
 data class CardData(
     val name: String = "",
 )
+
+/**
+ * `/x/space/fav/season/list?season_id=` —— 网页端「我追的合集」内容接口(匿名可用)。
+ * 本 app 只用它取 info.upper.mid:追合集条目可能不带 UP mid,
+ * 而 seasons_archives_list 需要 mid 才能取完整 meta + 曲目。
+ */
+@Serializable
+data class FavSeasonInfoResponse(
+    val code: Int = 0,
+    val message: String = "",
+    val data: FavSeasonInfoData? = null,
+)
+
+@Serializable
+data class FavSeasonInfoData(
+    val info: FavSeasonInfo? = null,
+)
+
+@Serializable
+data class FavSeasonInfo(
+    val id: Long = 0,
+    val title: String = "",
+    val upper: FavUpper? = null,
+)

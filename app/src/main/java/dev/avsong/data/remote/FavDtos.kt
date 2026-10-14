@@ -24,12 +24,18 @@ data class FavFolder(
     val mid: Long = 0,
     /** attr==0 公开;非 0 私密。 */
     val attr: Int = 0,
+    /**
+     * ⚠ 只有 collected/list(「我追的合集/收藏夹」)带这个字段:
+     * 11=收藏夹,21=合集(追合集)。合集条目的 id 是 season_id、mid/upper 是 UP 主。
+     * 自建夹(created/list、list-all)不带该字段,默认 0。
+     */
+    val type: Int = 0,
     val title: String = "",
     val cover: String? = null,
     @SerialName("media_count") val mediaCount: Int = 0,
     /** 带 rid+biz_type 查询时返回:1=已收藏 2=在私密夹未收藏 0=未收藏。 */
     @SerialName("fav_state") val favState: Int = 0,
-    val upper: FavUpper? = null, // 订阅收藏夹的创建者
+    val upper: FavUpper? = null, // 订阅收藏夹/合集的创建者
 )
 
 @Serializable
@@ -44,7 +50,9 @@ data class FavResourceListResponse(
 
 @Serializable
 data class FavResourceListData(
-    val medias: List<FavMedia> = emptyList(),
+    // ⚠ 收藏夹被清空后本接口会回 "medias":null(不是 []),非空声明会让 kotlinx 解析整个响应抛异常
+    // → 详情页报 "Expected start of the array '[' but had 'n'"(实测:收藏=1 首时取消收藏后复现)
+    val medias: List<FavMedia>? = null,
     val has_more: Boolean = false,
 )
 
