@@ -34,7 +34,9 @@ object SettingsStore {
     data class SettingsState(
         val quality: Quality = Quality.HIGH,
         val historyLimit: Int = 50, // 0=不限
-        /** 播放页热评弹幕开关(持久化;默认开)。 */
+        /** 播放页热评展示:0=弹幕(飘动),1=列表(底部抽屉 3/4 屏)。持久化。 */
+        val danmakuMode: Int = 0,
+        /** 播放页热评展示开关(持久化;默认开)。 */
         val danmakuEnabled: Boolean = true,
     )
 
@@ -52,6 +54,7 @@ object SettingsStore {
     private val KEY_QUALITY = intPreferencesKey("audio_quality")
     private val KEY_HISTORY = intPreferencesKey("history_limit")
     private val KEY_DANMAKU = booleanPreferencesKey("danmaku_enabled")
+    private val KEY_DANMAKU_MODE = intPreferencesKey("danmaku_mode")
 
     fun init(context: Context) {
         if (appContext == null) appContext = context.applicationContext
@@ -64,6 +67,7 @@ object SettingsStore {
                 ?: Quality.HIGH,
             historyLimit = p[KEY_HISTORY] ?: 50,
             danmakuEnabled = p[KEY_DANMAKU] ?: true,
+            danmakuMode = p[KEY_DANMAKU_MODE] ?: 0,
         )
     }
 
@@ -80,5 +84,10 @@ object SettingsStore {
     fun setDanmakuEnabled(value: Boolean) {
         _state.update { it.copy(danmakuEnabled = value) }
         scope.launch { datastore.edit { it[KEY_DANMAKU] = value } }
+    }
+
+    fun setDanmakuMode(value: Int) {
+        _state.update { it.copy(danmakuMode = value) }
+        scope.launch { datastore.edit { it[KEY_DANMAKU_MODE] = value } }
     }
 }

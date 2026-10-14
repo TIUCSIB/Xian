@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -99,8 +100,9 @@ fun PlayerScreen(
     onPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
     onCycleMode: () -> Unit,
-    /** 热评弹幕开关(持久化在 SettingsStore)+ 拉到的热评数据。 */
+    /** 热评展示:danmakuEnabled 开关 + danmakuMode(0=弹幕,1=列表抽屉)。 */
     danmakuEnabled: Boolean = true,
+    danmakuMode: Int = 0,
     onToggleDanmaku: () -> Unit = {},
     hotReplies: List<dev.avsong.data.ReplyRepository.HotReply> = emptyList(),
     positionProvider: () -> Long = { state.positionMs },
@@ -112,6 +114,8 @@ fun PlayerScreen(
     var hotRepliesState by remember(state.currentMediaId, danmakuEnabled) {
         mutableStateOf<List<dev.avsong.data.ReplyRepository.HotReply>?>(null)
     }
+    // 列表抽屉模式(mode=1)的开合;点开时若还没拉数据则拉
+    var showReplySheet by remember { mutableStateOf(false) }
     LaunchedEffect(state.currentMediaId, danmakuEnabled) {
         hotRepliesState = null
         if (danmakuEnabled && state.currentMediaId != null) {
@@ -210,11 +214,11 @@ fun PlayerScreen(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                // 热评弹幕开关:开=primary 色弹幕图标,关=灰(与播放页图标风格一致)
+                // 热评开关:图标随模式变(弹幕=Subtitles / 列表抽屉=Chat);开=primary 色
                 IconButton(onClick = onToggleDanmaku, modifier = Modifier.size(44.dp)) {
                     Icon(
-                        Icons.Rounded.Subtitles,
-                        contentDescription = if (danmakuEnabled) "关闭热评弹幕" else "开启热评弹幕",
+                        if (danmakuMode == 0) Icons.Rounded.Subtitles else Icons.AutoMirrored.Rounded.Chat,
+                        contentDescription = if (danmakuEnabled) "关闭热评" else "开启热评",
                         modifier = Modifier.size(24.dp),
                         tint = if (danmakuEnabled) MaterialTheme.colorScheme.primary
                         else if (state.artworkUri != null) Color.White
@@ -246,7 +250,7 @@ fun PlayerScreen(
 
             // 热评弹幕层:叠在上半区(封面/歌词之上),权重 1f 区域内飘过;
             // 不消费点击 → 封面点击切歌词/歌词点击 seek 的手势不受影响
-            if (danmakuEnabled && hotRepliesState.orEmpty().isNotEmpty()) {
+            if (danmakuEnabled && danmakuMode == 0 && hotRepliesState.orEmpty().isNotEmpty()) {
                 ReplyDanmaku(
                     replies = hotRepliesState.orEmpty(),
                     modifier = Modifier
@@ -301,6 +305,34 @@ fun PlayerScreen(
                             tint = if (favChecked) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                    // 列表模式(mode=1)的热评入口:点开 3/4 屏抽屉;弹幕模式热评常驻上半区,无需入口
+                    if (danmakuEnabled && danmakuMode == 1) {
+                        IconButton(
+                            onClick = {
+                                showReplySheet = true
+                                if (hotRepliesState == null) {
+                                    scope.launch {
+                                        val song = dev.avsong.domain.Song(
+                                            bvid = state.currentMediaId.orEmpty(),
+                                            title = state.title.orEmpty(),
+                                            artist = state.artist.orEmpty(),
+                                            coverUrl = state.artworkUri,
+                                        )
+                                        hotRepliesState = dev.avsong.data.ReplyRepository.hotRepliesFor(song) { bvid ->
+                                            favoriteRepository.fetchAid(bvid)
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier.size(44.dp),
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.Chat,
+                                contentDescription = "查看热评",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
 
                 }
@@ -410,6 +442,82 @@ fun PlayerScreen(
             }
 
             Spacer(Modifier.height(16.dp))
+        }
+
+        // 热评列表抽屉(mode=1):3/4 屏(用户指定),用户名+内容+点赞,可滚动
+        if (showReplySheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showReplySheet = false },
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 0.dp,
+            ) {
+                // 高度定在 3/4 屏(fillMaxHeight 直接量内容列;M3 sheet 容器 wrap 内容,
+                // modifier 上的 fillMaxHeight 不生效——用户实测「抽屉矮、下面空白」)
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(0.75f),
+                ) {
+                    Text(
+                        "热评",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 8.dp),
+                    )
+                    when {
+                        hotRepliesState == null -> Box(
+                            Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp) }
+
+                        hotRepliesState.orEmpty().isEmpty() -> Text(
+                            "暂无热门评论",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 24.dp),
+                        )
+
+                        else -> Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .verticalScroll(rememberScrollState()),
+                        ) {
+                            hotRepliesState.orEmpty().forEach { r ->
+                                Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)) {
+                                    Text(
+                                        r.uname,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        r.message,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Filled.ThumbUp,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            "${r.likeCount}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // 收藏夹选择弹窗(从 AvSongApp 挪入:爱心状态要在这里同步)

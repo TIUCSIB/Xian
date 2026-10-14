@@ -38,13 +38,15 @@ import kotlin.math.roundToInt
 import kotlin.random.Random
 
 /**
- * 热评弹幕:热评像弹幕一样从右往左飘过播放页上半区(封面黑纱上),循环播放。
+ * 热评弹幕:热评像弹幕一样从右往左飘过播放页上半区,循环播放。
  *
- * - 固定 3 条轨道;弹幕按序分配轨道,「右缘外 → 左缘外」匀速横穿
- *   (Animatable + LinearEasing;offset 像素级计算,随容器/弹幕实际宽度);
- * - 错峰:不同弹幕加不同启动延迟 + 飘完后统一休息 4s 再发下一批;
- * - 黑纱圆角底(45% 黑)保证任意封面可读;不消费点击,不挡封面/歌词手势;
- * - 最多同时 9 条(3 轨 × 3 批),够了——评论再多屏上也读不过来。
+ * 行程公式:x = containerW − progress × (containerW + chipW)。
+ * progress=0 时弹幕左缘 = 容器宽(整体在右缘外),progress=1 时右缘完全离开左缘——
+ * ⚠ chipWidth 必须等 onSizeChanged 上报后才开始动画,否则 travel 缺了弹幕宽,
+ * 会出现「起始露一截/结束左侧残留」(用户实测反馈)。
+ *
+ * 节拍:同轨弹幕**上一条完全飘出后下一条才出发**(8s 飘完 + 1s 间隔),
+ * 旧版按固定 delay 发车(同轨间隔 < 飘完时长)会叠在一起(用户实测反馈)。
  */
 @Composable
 fun ReplyDanmaku(
@@ -69,7 +71,7 @@ fun ReplyDanmaku(
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .height(44.dp),
+                        .height(48.dp),
                     contentAlignment = Alignment.CenterStart,
                 ) {
                     batch
@@ -78,8 +80,8 @@ fun ReplyDanmaku(
                         .forEach { (i, reply) ->
                             DanmakuItem(
                                 reply = reply,
-                                order = i / lanes,
-                                startDelayMs = i * 2_800L + Random(i).nextLong(0, 1_000),
+                                // 同轨错峰:第几条 × (飘完时长 8s + 间隔 1s);随机抖动避免三轨同步
+                                startDelayMs = (i / lanes) * 9_500L + Random(i).nextLong(0, 1_500),
                             )
                         }
                 }
@@ -91,26 +93,23 @@ fun ReplyDanmaku(
 @Composable
 private fun DanmakuItem(
     reply: ReplyRepository.HotReply,
-    order: Int,
     startDelayMs: Long,
 ) {
     var containerWidth by remember { mutableIntStateOf(0) }
     var chipWidth by remember { mutableIntStateOf(0) }
     val progress = remember { Animatable(0f) }
 
+    // chipWidth 未测到前不启动(否则行程缺弹幕宽 → 边缘残留/提前出现)
     LaunchedEffect(reply, containerWidth, chipWidth) {
         if (containerWidth == 0 || chipWidth == 0) return@LaunchedEffect
-        val travel = containerWidth + chipWidth
         delay(startDelayMs)
         while (true) {
             progress.snapTo(0f)
-            progress.animateTo(1f, tween(durationMillis = 13_000, easing = LinearEasing))
-            delay(4_000L)
+            progress.animateTo(1f, tween(durationMillis = 8_000, easing = LinearEasing))
+            delay(1_000L)
         }
     }
 
-    // 行容器(占满轨道宽):弹幕绝对偏移。x = 容器宽 - progress * (容器宽 + 弹幕宽)
-    // progress=0:左缘在容器右缘外;progress=1:右缘完全飘出容器左缘
     Box(
         Modifier
             .fillMaxWidth()
@@ -118,7 +117,13 @@ private fun DanmakuItem(
     ) {
         Row(
             Modifier
-                .offset { IntOffset((containerWidth - progress.value * (containerWidth + chipWidth)).roundToInt(), 0) }
+                .offset {
+                    IntOffset(
+                        // progress=0 → x=containerW(弹幕整体在右缘外);progress=1 → x=−chipW(完全出左缘)
+                        (containerWidth - progress.value * (containerWidth + chipWidth)).roundToInt(),
+                        0,
+                    )
+                }
                 .onSizeChanged { chipWidth = it.width },
         ) {
             DanmakuChip(reply)

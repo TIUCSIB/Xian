@@ -1,6 +1,5 @@
 package dev.avsong.ui.library
 
-import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
@@ -43,6 +42,7 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.Cookie
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -94,6 +94,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import dev.avsong.AvSongApp
+import dev.avsong.ui.common.ThemedNoticeHost
 import dev.avsong.ui.login.LoginUiState
 import dev.avsong.ui.rememberLoginViewModel
 import dev.avsong.ui.settings.SettingsStore
@@ -118,6 +119,9 @@ fun LibraryScreen(
     /** 睡眠定时剩余分钟(null=未启用),状态在 MainViewModel。 */
     sleepMinutesLeft: Int?,
     onSetSleepTimer: (Int) -> Unit,
+    /** 热评展示:0=弹幕 1=列表抽屉;-1=关(状态在 SettingsStore,经 AvSongApp 传入)。 */
+    hotReplyMode: Int,
+    onHotReplyModeChange: (Int) -> Unit,
 ) {
     val loginVm = rememberLoginViewModel()
     val loginState by loginVm.state.collectAsState()
@@ -184,6 +188,8 @@ fun LibraryScreen(
                 sleepMinutesLeft = sleepMinutesLeft,
                 onSetSleepTimer = onSetSleepTimer,
                 onCustomSleep = { showSleepCustomDialog = true },
+                hotReplyMode = hotReplyMode,
+                onHotReplyModeChange = onHotReplyModeChange,
                 downloadedCount = downloadedTracks.size,
                 onOpenDownloads = onOpenDownloads,
                 cacheLabel = cacheBytes?.let { formatCacheSize(it) },
@@ -262,11 +268,8 @@ fun LibraryScreen(
         )
     }
 
-    // 清理缓存完成 Toast(cacheToast 置空防重复消费)
-    cacheToast?.let {
-        Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
-        cacheToast = null
-    }
+    // 清理缓存完成提示:与全局队列/下载反馈同一套主题化提示条(cacheToast 置空防重复消费)
+    ThemedNoticeHost(message = cacheToast, onConsumed = { cacheToast = null })
 
     // 登录弹窗(参考 BiliTune 设计稿):二维码/轮询/结果全在弹窗内,不跳页
     if (showLoginDialog) {
@@ -416,6 +419,9 @@ private fun SettingsCard(
     sleepMinutesLeft: Int?,
     onSetSleepTimer: (Int) -> Unit,
     onCustomSleep: () -> Unit,
+    /** 热评展示:0=弹幕 1=列表抽屉;-1=关。 */
+    hotReplyMode: Int,
+    onHotReplyModeChange: (Int) -> Unit,
     downloadedCount: Int,
     onOpenDownloads: () -> Unit,
     cacheLabel: String?,
@@ -513,6 +519,31 @@ private fun SettingsCard(
                         expanded = null
                     },
                 )
+            }
+            // 热评展示方式:弹幕(播放页飘动)/列表(底部抽屉 3/4 屏)/关;播放页顶栏开关控制开/关
+            SettingsExpandableItem(
+                icon = Icons.Rounded.Subtitles,
+                title = "热评展示",
+                value = when (hotReplyMode) {
+                    0 -> "弹幕"
+                    1 -> "列表"
+                    else -> "关"
+                },
+                expanded = expanded == "hotreply",
+                onToggle = { expanded = if (expanded == "hotreply") null else "hotreply" },
+            ) {
+                SettingsOptionRow(label = "弹幕(播放页飘动)", selected = hotReplyMode == 0, onClick = {
+                    onHotReplyModeChange(0)
+                    expanded = null
+                })
+                SettingsOptionRow(label = "列表(底部抽屉)", selected = hotReplyMode == 1, onClick = {
+                    onHotReplyModeChange(1)
+                    expanded = null
+                })
+                SettingsOptionRow(label = "关闭", selected = hotReplyMode == -1, onClick = {
+                    onHotReplyModeChange(-1)
+                    expanded = null
+                })
             }
         }
         // 存储组:已下载(离线曲库入口)+ 清理缓存(行尾显示当前图片缓存大小)
