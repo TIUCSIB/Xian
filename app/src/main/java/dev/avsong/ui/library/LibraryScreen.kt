@@ -485,7 +485,7 @@ private fun SettingsCard(
                     sleepMinutesLeft == null -> "关"
                     sleepMinutesLeft < 60 -> "${sleepMinutesLeft} 分钟"
                     sleepMinutesLeft % 60 == 0 -> "${sleepMinutesLeft / 60} 小时"
-                    else -> "${sleepMinutesLeft / 60.0} 小时"
+                    else -> "${sleepMinutesLeft / 60} 小时 ${sleepMinutesLeft % 60} 分钟"
                 },
                 expanded = expanded == "sleep",
                 onToggle = { expanded = if (expanded == "sleep") null else "sleep" },
@@ -501,7 +501,7 @@ private fun SettingsCard(
                         label = when {
                             min < 60 -> "$min 分钟"
                             min % 60 == 0 -> "${min / 60} 小时"
-                            else -> "${min / 60.0} 小时"
+                            else -> "${min / 60} 小时 ${min % 60} 分钟"
                         },
                         selected = sleepMinutesLeft == min,
                         onClick = {
