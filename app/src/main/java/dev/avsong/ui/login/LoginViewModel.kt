@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import dev.avsong.data.auth.AuthStore
+import dev.avsong.data.auth.CookieRefresh
 import dev.avsong.data.auth.QrLogin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,7 +30,7 @@ sealed interface LoginUiState {
     data class Failed(val message: String) : LoginUiState
 }
 
-class LoginViewModel(private val authStore: AuthStore) : ViewModel() {
+class LoginViewModel(val authStore: AuthStore) : ViewModel() {
 
     private val _state = MutableStateFlow<LoginUiState>(LoginUiState.Idle)
     val state: StateFlow<LoginUiState> = _state.asStateFlow()
@@ -44,11 +45,29 @@ class LoginViewModel(private val authStore: AuthStore) : ViewModel() {
                     _state.value = LoginUiState.LoggedIn(a.uname ?: "已登录", a.vipLabel, a.face, a.level, a.coin)
                     if (!profileRefreshed) {
                         profileRefreshed = true
-                        // 进「我的」tab 静默刷新一次:硬币/等级是活数据,也兜底旧会话没存的头像等字段
-                        runCatching {
-                            QrLogin.fetchProfile()?.let {
-                                authStore.saveProfile(it.uname, it.face, it.vipLabel, it.level, it.coin)
+                        // 先进「我的」tab 时:先尝试 Cookie 续期(临近过期才真轮换),再刷资料。
+                        // 顺序不能反 —— 续期会换掉 SESSDATA,资料要用新会话去拉。
+                        if (a.canRefresh) {
+                            when (val r = CookieRefresh.checkAndRefresh(a)) {
+                                is CookieRefresh.Result.Success -> {
+                                    android.util.Log.i("AvSongAuth", "cookie refreshed, SESSDATA rotated")
+                                    authStore.saveRefreshed(r.sessData, r.biliJct, r.dedeUserId, r.acTimeValue)
+                                }
+                                // NotNeeded(还新鲜)/ Failed(网络等):都不动本地状态,静默继续
+                                else -> android.util.Log.i("AvSongAuth", "cookie refresh skipped: $r")
                             }
+                        } else {
+                            android.util.Log.i("AvSongAuth", "cookie refresh unavailable: no ac_time_value")
+                        }
+                        // 刷新资料:硬币/等级是活数据,也兜底旧会话没存的头像等字段。
+                        // ⚠ 会话已被服务端作废时(nav 回 -101)清本地登录态,回未登录 UI ——
+                        // 否则本地只剩空资料,显示「? + Lv0 + 硬币 0」的半坏状态,比直接提示未登录更迷惑(用户实测反馈)
+                        when (val r = QrLogin.fetchProfileResult()) {
+                            is QrLogin.ProfileResult.Ok -> authStore.saveProfile(
+                                r.profile.uname, r.profile.face, r.profile.vipLabel, r.profile.level, r.profile.coin,
+                            )
+                            QrLogin.ProfileResult.Invalid -> authStore.logout()
+                            QrLogin.ProfileResult.Error -> Unit // 网络/风控失败:保留本地会话,下次再试
                         }
                     }
                 }
@@ -76,7 +95,7 @@ class LoginViewModel(private val authStore: AuthStore) : ViewModel() {
             delay(1500)
             when (val r = QrLogin.poll(key)) {
                 is QrLogin.PollResult.Success -> {
-                    authStore.saveCookies(r.sessData, r.biliJct, r.dedeUserId)
+                    authStore.saveCookies(r.sessData, r.biliJct, r.dedeUserId, r.acTimeValue)
                     val profile = QrLogin.fetchProfile()
                     profile?.let { authStore.saveProfile(it.uname, it.face, it.vipLabel, it.level, it.coin) }
                     _state.value = LoginUiState.LoggedIn(

@@ -36,6 +36,12 @@ object QrLogin {
             val sessData: String,
             val biliJct: String,
             val dedeUserId: String,
+            /**
+             * Cookie 续期令牌。⚠ 不在 Set-Cookie 里,也不在 data.url 查询参数里,
+             * 而是轮询响应的 **data.refresh_token** 字段(权威实现 bilibili-api login_v2 确认)。
+             * 不取出来就没法续期,只能等过期后重新扫码。
+             */
+            val acTimeValue: String?,
         ) : PollResult
     }
 
@@ -66,6 +72,8 @@ object QrLogin {
                         sessData = sess,
                         biliJct = find("bili_jct").orEmpty(),
                         dedeUserId = find("DedeUserID").orEmpty(),
+                        // 续期令牌:data.refresh_token(不是 url 参数,Set-Cookie 也没有)
+                        acTimeValue = resp.data?.refreshToken?.takeIf { it.isNotBlank() },
                     )
                 }
                 86038 -> PollResult.Expired
@@ -75,20 +83,51 @@ object QrLogin {
         }
     }
 
-    /** 登录后拉资料;失败返回 null(不阻塞登录成功)。 */
-    suspend fun fetchProfile(): Profile? = withContext(Dispatchers.IO) {
-        runCatching {
-            val body = get("${BiliConstants.HOST_API}/x/web-interface/nav")
-            val nav = json.decodeFromString<NavResponse>(body).data ?: return@withContext null
-            Profile(
-                uname = nav.uname,
-                face = nav.face.takeIf { it.isNotBlank() }?.let(::httpsUrl),
-                vipLabel = nav.vip?.label?.text?.takeIf { it.isNotBlank() && nav.vip?.vipStatus == 1 },
-                level = nav.levelInfo?.currentLevel ?: 0,
-                coin = nav.coin,
-            )
-        }.getOrNull()
+    /**
+     * nav 结果三分:有效资料 / 服务端明确未登录 / 状态未知(网络失败)。
+     * 调用方据此决定「更新资料」还是「清本地会话」——
+     * ⚠ 网络失败绝不能当未登录处理(会把还能用的登录误踢掉)。
+     */
+    sealed interface ProfileResult {
+        data class Ok(val profile: Profile) : ProfileResult
+        data object Invalid : ProfileResult
+        data object Error : ProfileResult
     }
+
+    /** 拉资料并区分结果;登录后与「我的」页静默刷新共用。 */
+    suspend fun fetchProfileResult(): ProfileResult = withContext(Dispatchers.IO) {
+        try {
+            val body = get("${BiliConstants.HOST_API}/x/web-interface/nav")
+            val resp = json.decodeFromString<NavResponse>(body)
+            val nav = resp.data
+            when {
+                // -101=账号未登录(会话已失效);code 0 但 isLogin=false 同义。
+                // 其它非 0(如 -412 风控)归 Error:不清会话,避免误踢
+                resp.code == -101 || (resp.code == 0 && (nav == null || !nav.isLogin)) ->
+                    ProfileResult.Invalid
+
+                resp.code != 0 || nav == null -> ProfileResult.Error
+                // isLogin=true 但昵称为空属异常响应,保留旧资料不覆盖
+                nav.uname.isBlank() -> ProfileResult.Error
+
+                else -> ProfileResult.Ok(
+                    Profile(
+                        uname = nav.uname,
+                        face = nav.face.takeIf { it.isNotBlank() }?.let(::httpsUrl),
+                        vipLabel = nav.vip?.label?.text?.takeIf { it.isNotBlank() && nav.vip?.vipStatus == 1 },
+                        level = nav.levelInfo?.currentLevel ?: 0,
+                        coin = nav.coin,
+                    ),
+                )
+            }
+        } catch (e: Exception) {
+            ProfileResult.Error
+        }
+    }
+
+    /** 登录后拉资料;失败/未登录返回 null(不阻塞登录成功)。 */
+    suspend fun fetchProfile(): Profile? =
+        (fetchProfileResult() as? ProfileResult.Ok)?.profile
 
     data class Profile(
         val uname: String?,
