@@ -340,3 +340,14 @@ BiliTune 的 `_cookiesFromLoginUrl` 只解析 url(含 `ac_time_value` 参数),�
 **失败语义**:续期是「锦上添花」——任何一步失败都只记日志、不动本地登录态(不能因为续期失败就把用户踢下线)。成功才整体替换三件套 + 新令牌(必须原子落盘,半新半旧会让所有接口 403)。
 
 **并发防护**:启动检查与「我的」页检查可能并发,而续期会轮换 Cookie;`CookieRefresh` 用 Mutex 串行化 + 进程内只成功续一次(并发两次会互相覆盖)。
+
+## 16. 热评(2026-10-14 加)
+
+```
+GET api.bilibili.com/x/v2/reply/main?type=1&oid=<aid>&mode=3&next=0
+  (type=1 视频;oid 是 **aid 不是 bvid**;mode=3 按热度;匿名可用)
+→ replies[].{content.message, member.uname, like};cursor.is_end / all_count
+```
+
+· 播放页只拉第一页(≤20 条)够用;实现 ReplyRepository + 播放页弹幕(ReplyDanmaku)
+· 实测 Cornfield Chase(BV1yf4y1D7mC,aid=287228385)返回真实热评

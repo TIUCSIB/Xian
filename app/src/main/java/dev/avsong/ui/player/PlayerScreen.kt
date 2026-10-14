@@ -4,7 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,9 +18,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.automirrored.rounded.Chat
+import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -30,6 +34,7 @@ import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +44,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -79,6 +86,7 @@ import kotlin.math.roundToLong
  * 底部叠两张深灰圆角卡片(信息卡 + 控制卡),播放键为柠檬黄实心圆。
  * 纯色扁平:无阴影、无渐变、无光晕。进度用本地 ticker 每秒采样。
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun PlayerScreen(
     state: PlayerState,
@@ -91,10 +99,33 @@ fun PlayerScreen(
     onPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
     onCycleMode: () -> Unit,
+    /** 热评弹幕开关(持久化在 SettingsStore)+ 拉到的热评数据。 */
+    danmakuEnabled: Boolean = true,
+    onToggleDanmaku: () -> Unit = {},
+    hotReplies: List<dev.avsong.data.ReplyRepository.HotReply> = emptyList(),
     positionProvider: () -> Long = { state.positionMs },
 ) {
     var position by remember(state.currentMediaId, state.isPlaying) { mutableLongStateOf(state.positionMs) }
     var showLyric by remember { mutableStateOf(false) }
+    // 热评弹幕:开关开且换曲时拉一次(失败=空列表,弹幕层静默不显示)。
+    // 注意 key 用 currentMediaId+danmakuEnabled:关再开会重新拉(数据可能已过期)
+    var hotRepliesState by remember(state.currentMediaId, danmakuEnabled) {
+        mutableStateOf<List<dev.avsong.data.ReplyRepository.HotReply>?>(null)
+    }
+    LaunchedEffect(state.currentMediaId, danmakuEnabled) {
+        hotRepliesState = null
+        if (danmakuEnabled && state.currentMediaId != null) {
+            val song = dev.avsong.domain.Song(
+                bvid = state.currentMediaId!!,
+                title = state.title.orEmpty(),
+                artist = state.artist.orEmpty(),
+                coverUrl = state.artworkUri,
+            )
+            hotRepliesState = dev.avsong.data.ReplyRepository.hotRepliesFor(song) { bvid ->
+                favoriteRepository.fetchAid(bvid)
+            }
+        }
+    }
     // 收藏:爱心回显 + 弹窗开关(声明在函数级,信息卡爱心与弹窗共用)
     var favChecked by remember(state.currentMediaId) { mutableStateOf(false) }
     var showFavPicker by remember { mutableStateOf(false) }
@@ -108,6 +139,7 @@ fun PlayerScreen(
     }
     // 浅色/夜间分支用:主题不带 isDark 标记,以 surface 亮度判定(两套方案的 surface 差异极大)
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val scope = rememberCoroutineScope()
 
     // 播放中每秒采样一次进度
     LaunchedEffect(state.currentMediaId, state.isPlaying) {
@@ -178,6 +210,17 @@ fun PlayerScreen(
                     )
                 }
                 Spacer(Modifier.weight(1f))
+                // 热评弹幕开关:开=primary 色弹幕图标,关=灰(与播放页图标风格一致)
+                IconButton(onClick = onToggleDanmaku, modifier = Modifier.size(44.dp)) {
+                    Icon(
+                        Icons.Rounded.Subtitles,
+                        contentDescription = if (danmakuEnabled) "关闭热评弹幕" else "开启热评弹幕",
+                        modifier = Modifier.size(24.dp),
+                        tint = if (danmakuEnabled) MaterialTheme.colorScheme.primary
+                        else if (state.artworkUri != null) Color.White
+                        else MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
 
             // 歌词态:歌词铺满上半区(坐在封面黑纱上,用白色系文字),信息卡整个隐藏,
@@ -199,6 +242,17 @@ fun PlayerScreen(
                 )
             } else {
                 Spacer(Modifier.weight(1f))
+            }
+
+            // 热评弹幕层:叠在上半区(封面/歌词之上),权重 1f 区域内飘过;
+            // 不消费点击 → 封面点击切歌词/歌词点击 seek 的手势不受影响
+            if (danmakuEnabled && hotRepliesState.orEmpty().isNotEmpty()) {
+                ReplyDanmaku(
+                    replies = hotRepliesState.orEmpty(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                )
             }
 
             // 信息卡:半透明纯色卡(卡内不再各铺一份模糊封面——两张卡各裁一块封面,
@@ -248,6 +302,7 @@ fun PlayerScreen(
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+
                 }
                 Spacer(Modifier.height(14.dp))
                 // 波形进度条常驻信息卡(歌词态也要有进度);歌词本体已移到上半区

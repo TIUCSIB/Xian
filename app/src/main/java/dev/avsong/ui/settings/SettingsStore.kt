@@ -1,6 +1,7 @@
 package dev.avsong.ui.settings
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -33,6 +34,8 @@ object SettingsStore {
     data class SettingsState(
         val quality: Quality = Quality.HIGH,
         val historyLimit: Int = 50, // 0=不限
+        /** 播放页热评弹幕开关(持久化;默认开)。 */
+        val danmakuEnabled: Boolean = true,
     )
 
     private val _state = MutableStateFlow(SettingsState())
@@ -48,6 +51,7 @@ object SettingsStore {
     private val Context.dataStore by preferencesDataStore(name = "settings")
     private val KEY_QUALITY = intPreferencesKey("audio_quality")
     private val KEY_HISTORY = intPreferencesKey("history_limit")
+    private val KEY_DANMAKU = booleanPreferencesKey("danmaku_enabled")
 
     fun init(context: Context) {
         if (appContext == null) appContext = context.applicationContext
@@ -59,6 +63,7 @@ object SettingsStore {
             quality = p[KEY_QUALITY]?.let { id -> Quality.entries.firstOrNull { it.id == id } }
                 ?: Quality.HIGH,
             historyLimit = p[KEY_HISTORY] ?: 50,
+            danmakuEnabled = p[KEY_DANMAKU] ?: true,
         )
     }
 
@@ -70,5 +75,10 @@ object SettingsStore {
     fun setHistoryLimit(value: Int) {
         _state.update { it.copy(historyLimit = value) }
         scope.launch { datastore.edit { it[KEY_HISTORY] = value } }
+    }
+
+    fun setDanmakuEnabled(value: Boolean) {
+        _state.update { it.copy(danmakuEnabled = value) }
+        scope.launch { datastore.edit { it[KEY_DANMAKU] = value } }
     }
 }

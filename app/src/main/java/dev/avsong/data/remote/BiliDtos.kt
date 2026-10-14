@@ -202,3 +202,28 @@ data class NavVip(
 data class NavVipLabel(
     val text: String = "",
 )
+
+/** /x/v2/reply/main(热评;type=1 视频,oid=aid,mode=3 按热度) */
+@Serializable
+data class ReplyResponse(
+    val code: Int = -1,
+    val data: ReplyData? = null,
+)
+
+@Serializable
+data class ReplyData(
+    val replies: List<ReplyItem>? = null,
+)
+
+@Serializable
+data class ReplyItem(
+    val like: Int = 0,
+    val member: ReplyMember,
+    val content: ReplyContent,
+)
+
+@Serializable
+data class ReplyMember(val uname: String = "")
+
+@Serializable
+data class ReplyContent(val message: String = "")
