@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Cookie
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -110,6 +111,9 @@ import kotlin.math.sin
 fun LibraryScreen(
     onLogin: () -> Unit,
     onOpenDownloads: () -> Unit,
+    /** 睡眠定时剩余分钟(null=未启用),状态在 MainViewModel。 */
+    sleepMinutesLeft: Int?,
+    onSetSleepTimer: (Int) -> Unit,
 ) {
     val loginVm = rememberLoginViewModel()
     val loginState by loginVm.state.collectAsState()
@@ -168,6 +172,8 @@ fun LibraryScreen(
             onQualityChange = { app.settingsStore.setQuality(it) },
             historyLimit = settings.historyLimit,
             onHistoryChange = { app.settingsStore.setHistoryLimit(it) },
+            sleepMinutesLeft = sleepMinutesLeft,
+            onSetSleepTimer = onSetSleepTimer,
             downloadedCount = downloadedTracks.size,
             onOpenDownloads = onOpenDownloads,
             cacheLabel = cacheBytes?.let { formatCacheSize(it) },
@@ -351,6 +357,8 @@ private fun SettingsCard(
     onQualityChange: (SettingsStore.Quality) -> Unit,
     historyLimit: Int,
     onHistoryChange: (Int) -> Unit,
+    sleepMinutesLeft: Int?,
+    onSetSleepTimer: (Int) -> Unit,
     downloadedCount: Int,
     onOpenDownloads: () -> Unit,
     cacheLabel: String?,
@@ -400,6 +408,40 @@ private fun SettingsCard(
                         selected = n == historyLimit,
                         onClick = {
                             onHistoryChange(n)
+                            expanded = null
+                        },
+                    )
+                }
+            }
+            // 睡眠定时:全局功能放设置卡(用户反馈:不该放播放页);到点暂停播放,不持久化
+            SettingsExpandableItem(
+                icon = Icons.Rounded.Bedtime,
+                title = "睡眠定时",
+                value = when {
+                    sleepMinutesLeft == null -> "关"
+                    sleepMinutesLeft < 60 -> "${sleepMinutesLeft} 分钟"
+                    sleepMinutesLeft % 60 == 0 -> "${sleepMinutesLeft / 60} 小时"
+                    else -> "${sleepMinutesLeft / 60.0} 小时"
+                },
+                expanded = expanded == "sleep",
+                onToggle = { expanded = if (expanded == "sleep") null else "sleep" },
+            ) {
+                if (sleepMinutesLeft != null) {
+                    SettingsOptionRow(label = "关闭定时", selected = false, onClick = {
+                        onSetSleepTimer(0)
+                        expanded = null
+                    })
+                }
+                listOf(15, 30, 60, 90).forEach { min ->
+                    SettingsOptionRow(
+                        label = when {
+                            min < 60 -> "$min 分钟"
+                            min % 60 == 0 -> "${min / 60} 小时"
+                            else -> "${min / 60.0} 小时"
+                        },
+                        selected = sleepMinutesLeft == min,
+                        onClick = {
+                            onSetSleepTimer(min)
                             expanded = null
                         },
                     )
