@@ -214,17 +214,6 @@ fun PlayerScreen(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                // 热评开关:图标随模式变(弹幕=Subtitles / 列表抽屉=Chat);开=primary 色
-                IconButton(onClick = onToggleDanmaku, modifier = Modifier.size(44.dp)) {
-                    Icon(
-                        if (danmakuMode == 0) Icons.Rounded.Subtitles else Icons.AutoMirrored.Rounded.Chat,
-                        contentDescription = if (danmakuEnabled) "关闭热评" else "开启热评",
-                        modifier = Modifier.size(24.dp),
-                        tint = if (danmakuEnabled) MaterialTheme.colorScheme.primary
-                        else if (state.artworkUri != null) Color.White
-                        else MaterialTheme.colorScheme.onSurface,
-                    )
-                }
             }
 
             // 歌词态:歌词铺满上半区(坐在封面黑纱上,用白色系文字),信息卡整个隐藏,
