@@ -197,7 +197,8 @@ fun SongRow(
         }
 
         // 当前播放曲:整封面暗色遮罩(跟随封面圆角)+ 居中音波条,歌名高亮。
-        // 遮罩深度与标题色分深浅色:浅色下 45% 黑罩把封面糊得太狠、主题色标题发闷,都减档
+        // 遮罩深浅统一 0.45(2026-10-14 用户要求):音波条已改白色,浅色主题下也得靠深遮罩衬托;
+        // 旧的「浅色减档到 12%」是给主题色音波条留的,现在不需要了(标题在遮罩外,不受影响)
         Box {
             CoverArt(url = song.coverUrl)
             if (isCurrent && isPlaying) {
@@ -205,7 +206,7 @@ fun SongRow(
                     modifier = Modifier
                         .matchParentSize()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color.Black.copy(alpha = if (dark) 0.45f else 0.12f)),
+                        .background(Color.Black.copy(alpha = 0.45f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     PlayingEqualizer(
@@ -343,8 +344,9 @@ fun CoverArt(url: String?) {
  * 暂停或非当前曲不出现。
  *
  * 配色按场景分(用户要求):[onArtwork] = true 表示音波条压在**封面**上(列表行封面遮罩/
- * 精选卡/歌单卡播放钮)——白色 + 深色描底,亮封面也清晰,描底在暗封面融入背景不可见;
- * false(默认)= 坐在纯色底上(队列抽屉行/歌单详情行)——主题色 primary,无描底。
+ * 精选卡/歌单卡播放钮)——白色,靠加深后的封面遮罩(0.45)衬出对比;
+ * false(默认)= 坐在纯色底上(队列抽屉行/歌单详情行)——主题色 primary。
+ * ⚠ 不加描底:白色条叠深色描边在浅遮罩上会显出"描边感",用户反馈很怪;靠遮罩深度解决。
  */
 @Composable
 fun PlayingEqualizer(
@@ -368,20 +370,10 @@ fun PlayingEqualizer(
         val n = bars.size
         val gap = 2.dp.toPx()
         val barW = (size.width - gap * (n - 1)) / n
-        val outline = Color.Black.copy(alpha = 0.35f)
-        val pad = if (onArtwork) 1.2.dp.toPx() else 0f
         bars.forEachIndexed { i, anim ->
             val h = size.height * anim.value
             val x = i * (barW + gap)
             val y = size.height - h
-            if (onArtwork) {
-                drawRoundRect(
-                    color = outline,
-                    topLeft = Offset(x - pad, y - pad),
-                    size = Size(width = barW + pad * 2, height = h + pad * 2),
-                    cornerRadius = CornerRadius((barW + pad * 2) / 2f),
-                )
-            }
             drawRoundRect(
                 color = color,
                 topLeft = Offset(x, y),
