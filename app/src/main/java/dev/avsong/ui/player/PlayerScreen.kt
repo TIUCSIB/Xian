@@ -239,7 +239,8 @@ fun PlayerScreen(
 
             // 热评弹幕层:叠在上半区(封面/歌词之上),权重 1f 区域内飘过;
             // 不消费点击 → 封面点击切歌词/歌词点击 seek 的手势不受影响
-            if (danmakuEnabled && danmakuMode == 0 && hotRepliesState.orEmpty().isNotEmpty()) {
+            // 歌词态不显示弹幕:读歌词的沉浸模式,飘字干扰(用户反馈)
+            if (!showLyric && danmakuEnabled && danmakuMode == 0 && hotRepliesState.orEmpty().isNotEmpty()) {
                 ReplyDanmaku(
                     replies = hotRepliesState.orEmpty(),
                     modifier = Modifier
@@ -296,7 +297,7 @@ fun PlayerScreen(
                         )
                     }
                     // 列表模式(mode=1)的热评入口:点开 3/4 屏抽屉;弹幕模式热评常驻上半区,无需入口
-                    if (danmakuEnabled && danmakuMode == 1) {
+                    if (danmakuEnabled && danmakuMode == 1 && !showLyric) {
                         IconButton(
                             onClick = {
                                 showReplySheet = true
