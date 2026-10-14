@@ -19,12 +19,13 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 歌词多源:
  * 1. 网易云公开接口:多候选查询(清洗标题 × 歌手变体)+ 时长校验,取第一个靠谱结果
- * 2. B 站视频字幕(/x/player/v2 → subtitle_url)兜底 —— 翻唱/搬运网易云没有时才有
- * 3. bgm_info 元数据(视频自带 BGM 标题/歌手)增强第三方搜索
+ * 2. lrclib.net(开源歌词库):网易云没有的新歌/独立音乐常有,响应直接带时间轴歌词
+ * 3. B 站视频字幕(/x/player/v2 → subtitle_url)兜底 —— 翻唱/搬运两个库都没有时才有
+ * 4. bgm_info 元数据(视频自带 BGM 标题/歌手)增强第三方搜索
  *
- * ⚠ 网易云必须排在 B 站字幕前面(2026-10-13 调整):B 站 AI 字幕是对着**视频音轨**转写的,
+ * ⚠ 网易云/lrclib 必须排在 B 站字幕前面(2026-10-13 调整):B 站 AI 字幕是对着**视频音轨**转写的,
  * 带口播/解说的音乐视频会把「这个大家都知道/但是呢…」这类说话当成歌词(用户实测:Dear D
- * 显示成讲新能源汽车泄压阀)。网易云有严格时长校验,命中即真歌词;只有搜不到(翻唱/小众)
+ * 显示成讲新能源汽车泄压阀)。第三方库有严格时长校验,命中即真歌词;只有都搜不到(翻唱/小众)
  * 才轮到 B 站字幕——它至少时间轴和视频对齐。
  *
  * 结果按 bvid 缓存(含"无歌词"负缓存)。
@@ -53,6 +54,16 @@ class LyricRepository {
 
     @Serializable
     private data class NeteaseLrc(val lyric: String = "")
+
+    // ---------- lrclib DTO ----------
+
+    @Serializable
+    private data class LrclibTrack(
+        val trackName: String = "",
+        val artistName: String = "",
+        val duration: Double = 0.0, // 秒
+        val syncedLyrics: String? = null, // LRC 格式(带时间轴)
+    )
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val cache = ConcurrentHashMap<String, List<LyricLine>>()
@@ -92,8 +103,15 @@ class LyricRepository {
             return if (tlyric != null) mergeTranslation(lines, parseLrc(tlyric)) else lines
         }
 
-        // 源 2:B 站字幕兜底 —— 翻唱/搬运网易云搜不到时才用(时间轴和视频对齐,
-        // 但口播视频会转出说话当歌词,故排在网易云之后,见类注释)
+        // 源 2:lrclib(开源歌词库,列表响应直接带 syncedLyrics)—— 网易云没有的新歌/
+        // 独立音乐它常有(实测:李健《人间共鸣》2025 新歌网易云无,B 站字幕是口播,只有 lrclib 命中)
+        for (q in candidates.take(4)) {
+            val lines = lrclibSearch(q, durationSec)
+            if (lines.isNotEmpty()) return lines
+        }
+
+        // 源 3:B 站字幕兜底 —— 翻唱/搬运两个第三方库都搜不到时才用(时间轴和视频对齐,
+        // 但口播视频会转出说话当歌词,故排在最后,见类注释)
         ctx?.let { c ->
             c.subtitleLines.takeIf { it.isNotEmpty() }?.let { return it }
         }
@@ -204,6 +222,30 @@ class LyricRepository {
         val trans = resp.tlyric?.lyric?.takeIf { it.isNotBlank() }
         main.takeIf { it.isNotBlank() }?.let { it to trans }
     }.getOrNull()
+
+    // ---------- lrclib ----------
+
+    /**
+     * lrclib.net 搜索:响应数组每项直接带 syncedLyrics(LRC),省一次取词请求。
+     * 时长校验 ±15s(durationSec 未知则放行)。lrclib 要求 UA 标注应用,不复用浏览器 UA。
+     */
+    private fun lrclibSearch(keyword: String, durationSec: Long): List<LyricLine> {
+        val url = "https://lrclib.net/api/search?q=" + java.net.URLEncoder.encode(keyword, "UTF-8")
+        val tracks = runCatching {
+            val request = Request.Builder().url(url)
+                .header("User-Agent", "AvSong/1.0 (bilibili music player)")
+                .get().build()
+            thirdPartyClient.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) return@runCatching emptyList()
+                json.decodeFromString<List<LrclibTrack>>(resp.body?.string().orEmpty())
+            }
+        }.getOrDefault(emptyList())
+        val hit = tracks.firstOrNull { t ->
+            !t.syncedLyrics.isNullOrBlank() &&
+                (durationSec <= 0 || kotlin.math.abs(t.duration - durationSec) <= 15)
+        } ?: return emptyList()
+        return parseLrc(hit.syncedLyrics!!)
+    }
 
     // ---------- HTTP ----------
 
