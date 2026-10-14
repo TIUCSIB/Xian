@@ -55,6 +55,8 @@ import kotlinx.coroutines.withContext
 fun DownloadedScreen(
     onBack: () -> Unit,
     onPlay: (List<Song>, Int) -> Unit,
+    /** 点到「当前播放中」的行:播放/暂停切换(而不是重建队列从头播)。 */
+    onPlayPause: () -> Unit,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
     currentMediaId: String?,
@@ -154,7 +156,13 @@ fun DownloadedScreen(
                 )
                 else -> SongList(
                     songs = songs,
-                    onPlay = onPlay,
+                    // 行尾播放钮不显示(与首页列表一致,行本身可点);
+                    // 点当前曲 = 播放/暂停(重复点击重建队列从头播的旧逻辑不对,用户反馈)
+                    showPlayButton = false,
+                    onPlay = { list, index ->
+                        if (list.getOrNull(index)?.bvid == currentMediaId) onPlayPause()
+                        else onPlay(list, index)
+                    },
                     currentMediaId = currentMediaId,
                     isPlaying = isPlaying,
                     onPlayNext = onPlayNext,

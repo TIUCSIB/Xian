@@ -419,6 +419,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                     DownloadedScreen(
                         onBack = { navController.popBackStack() },
                         onPlay = { songs, index -> viewModel.playQueue(songs, index) },
+                        onPlayPause = viewModel::playPause,
                         onPlayNext = viewModel::playNext,
                         onAddToQueue = viewModel::addToQueue,
                         currentMediaId = state.player.currentMediaId,
