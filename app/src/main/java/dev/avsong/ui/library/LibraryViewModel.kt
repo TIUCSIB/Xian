@@ -164,6 +164,7 @@ class LibraryViewModel(
 class FolderContentViewModel(
     private val favRepo: FavoriteRepository,
     val folderId: Long,
+    private val playerController: PlayerController,
 ) : ViewModel() {
 
     data class UiState(
@@ -250,6 +251,52 @@ class FolderContentViewModel(
                 }
             } catch (e: Exception) {
                 // 拉全量失败:保留已加载部分,搜索照常在已加载范围里过滤
+            } finally {
+                _loadingAll.value = false
+            }
+        }
+    }
+
+    /**
+     * 收藏夹播放:已加载部分立即起播,后台继续拉剩余页并**逐批追加进队列**。
+     * 与合集 playWithFill 同构(同一目的:收藏夹几百首时队列不该只有第一页 20 首),
+     * 数据源换成收藏夹分页接口。单页失败重试 2 次防 -412,仍失败则中止(保留已入列部分)。
+     */
+    fun playWithFill(startIndex: Int, playLoaded: (List<Song>, Int) -> Unit) {
+        val s = _state.value
+        // ⚠ 查真标记 _loadingAll(UiState 里没有该字段);loading 中也不补,防与首载竞态
+        if (s.loading || _loadingAll.value) return
+        _loadingAll.value = true
+        viewModelScope.launch {
+            playLoaded(s.songs, startIndex)
+            // 换队后捕获代次:用户切了别的播放/清空队列就中止,别把旧收藏夹的剩余页灌进新队列
+            val session = playerController.session
+            try {
+                var songs = s.songs
+                var page = s.page
+                var hasMore = s.hasMore
+                var failures = 0
+                while (hasMore && playerController.session == session) {
+                    val result = try {
+                        favRepo.folderContents(folderId, page + 1)
+                    } catch (e: Exception) {
+                        if (++failures < 3) {
+                            delay(1500)
+                            continue
+                        }
+                        throw e
+                    }
+                    failures = 0
+                    page += 1
+                    hasMore = result.hasMore
+                    val fresh = result.songs.filter { new -> songs.none { it.bvid == new.bvid } }
+                    if (fresh.isEmpty()) continue
+                    songs = songs + fresh
+                    _state.update { it.copy(songs = songs, page = page, hasMore = hasMore) }
+                    playerController.appendSongsToQueue(fresh.map { it.toMediaItem() })
+                }
+            } catch (e: Exception) {
+                // 补全中止:队列保留已入列的部分
             } finally {
                 _loadingAll.value = false
             }

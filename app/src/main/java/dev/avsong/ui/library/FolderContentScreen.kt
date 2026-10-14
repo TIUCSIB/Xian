@@ -50,7 +50,8 @@ fun FolderContentScreen(
         hasMore = state.hasMore,
         onLoadMore = vm::loadMore,
         onBack = onBack,
-        onPlay = onPlay,
+        // 播放前先拉全量:否则大收藏夹点播放只入列已加载的第一页(20 首);与合集详情同款
+        onPlay = { _, index -> vm.playWithFill(index, onPlay) },
         onShuffle = onShuffle,
         currentMediaId = currentMediaId,
         isPlaying = isPlaying,

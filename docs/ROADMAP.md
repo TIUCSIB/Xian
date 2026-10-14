@@ -26,6 +26,7 @@
 - [x] UP 主合集=歌单(2026-10-10):「我的」页「合集」区,粘贴 `space.bilibili.com/<mid>/lists/<sid>` 链接添加,DataStore 本地持久化,合集内容页(只读分页/播放全部/单曲点播)。978 首大合集实测:meta 回显、翻页加载、整队入列连播全通过。B 站无「订阅合集」列表接口(自建合集才走 seasons_series_list),故本地订阅方案。⚠ type=series(系列)未接。配方见 docs/bilibili-api.md §14
 - [x] 已下载离线曲库(2026-10-13,核心链路):下载文件名带 bvid 前缀(修同名覆盖)+ DownloadedStore 元数据 + 「我的」页「已下载」入口 + DownloadedScreen(浏览/播放/删除,长按菜单 onRemove+模态确认)+ 清理缓存行显示大小。file:// 离线播放打通(DefaultDataSource 分发 + 现场快照 uri 字段),MuMu 实测断网 force-stop 重启续播通过;孤儿扫描双向同步(外部删文件计数不虚高、旧版无 bvid 文件不丢歌)。剩:下载并发队列/进度/取消、目录可选、共享目录(见下)
 - [x] 会话失效正确清理 + 退出登录移入设置卡(2026-10-13):`QrLogin.fetchProfileResult()` 三态(Ok/Invalid/Error),服务端 -101 时清本地登录态退回未登录 UI(修前会把 uname 覆盖成空串、face/vip 删掉,停在「? + Lv0 + 硬币 0」半坏状态);退出登录从账户头图标改为设置卡末行(仅登录时渲染 + 确认弹窗)
+- [x] 收藏夹详情队列补全 + 已下载页搜索 + 睡眠定时(2026-10-14):收藏夹 playWithFill(与合集同构,修「25 首收藏夹只播 20 首」);下载页顶栏放大镜本地搜索(标题/歌手,空态提示);睡眠定时在「我的」页播放组(行内展开,到点 pause 不 toggle,内存态不持久化)。MuMu 实测:定时回显/倒计时走动/取消归位、下载页搜索命中与空态均通过
 - [x] Cookie 续期(2026-10-13,已端到端实测):`data/auth/CookieRefresh.kt` — cookie/info → RSA(⚠ 用服务端 timestamp + 显式 MGF1-SHA256,否则 404)→ correspond(gzip 解压抠 refresh_csrf)→ refresh → confirm。`ac_time_value` 取自扫码轮询响应的 `data.refresh_token` 平级字段(不在 url 里)。配方见 docs/bilibili-api.md §15。**MuMu 实测**:设备上真实跑通续期,三件套 + 令牌全部轮换,新 Cookie 调 nav 返回 isLogin=true;无令牌/网络失败均优雅降级不动登录态
 
 ## 下一步(按推荐顺序)
