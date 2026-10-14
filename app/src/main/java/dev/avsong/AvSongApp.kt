@@ -10,6 +10,7 @@ import okio.Path.Companion.toOkioPath
 import dev.avsong.data.BiliHttp
 import dev.avsong.data.BiliSongRepository
 import dev.avsong.data.CollectionStore
+import dev.avsong.data.DownloadManager
 import dev.avsong.data.DownloadedStore
 import dev.avsong.data.FavoriteRepository
 import dev.avsong.data.PlayHistoryStore
@@ -45,6 +46,9 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
     lateinit var downloadedStore: DownloadedStore
         private set
 
+    lateinit var downloadManager: DownloadManager
+        private set
+
     lateinit var playHistoryStore: PlayHistoryStore
         private set
 
@@ -65,6 +69,7 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
         searchHistoryStore = SearchHistoryStore(this)
         collectionStore = CollectionStore(this)
         downloadedStore = DownloadedStore(this)
+        downloadManager = DownloadManager(this)
         playHistoryStore = PlayHistoryStore(this)
         themeStore = ThemeStore(this)
         dev.avsong.ui.settings.SettingsStore.init(this)

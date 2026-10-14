@@ -29,6 +29,8 @@ fun FolderContentScreen(
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
     onDownload: (Song) -> Unit,
+    /** ⋮ 菜单「下载全部」:把已加载的歌曲整批入队(队列自动去重已下载/已在队的)。 */
+    onDownloadAll: (List<Song>) -> Unit,
     currentMediaId: String?,
     isPlaying: Boolean,
 ) {
@@ -61,7 +63,10 @@ fun FolderContentScreen(
         onRemoveSong = { vm.removeFromFolder(it) },
         loadingAll = loadingAll,
         onLoadAll = vm::loadAll,
-        menuActions = listOf("删除收藏夹" to { showDeleteConfirm = true }),
+        menuActions = listOf(
+            "下载全部(已加载 " + state.songs.size.toString() + " 首)" to { onDownloadAll(state.songs) },
+            "删除收藏夹" to { showDeleteConfirm = true },
+        ),
     )
 
     // 删除确认:B 站远端删除不可撤销,必须模态确认

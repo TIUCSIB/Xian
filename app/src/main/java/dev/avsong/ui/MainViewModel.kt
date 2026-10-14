@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import dev.avsong.data.BiliConstants
 import dev.avsong.data.BiliHttp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -533,6 +534,41 @@ class MainViewModel(
         aidCache[bvid] ?: favoriteRepository.fetchAid(bvid).also { aidCache[bvid] = it }
 
     fun playPause() = playerController.playPause()
+    // ---------- 睡眠定时(定时关闭) ----------
+    //
+    // 语义:设 N 分钟后暂停播放(不退出 app、不停服务,用户醒来还能续播)。
+    // 状态只在内存不持久化 —— 「睡一觉后残留一个倒计时」比丢失设置更糟。
+    private var sleepTimerJob: Job? = null
+    private val _sleepMinutesLeft = MutableStateFlow<Int?>(null)
+
+    /** 剩余分钟(UI 显示);null = 未启用。 */
+    val sleepMinutesLeft: StateFlow<Int?> = _sleepMinutesLeft.asStateFlow()
+
+    /** 设定睡眠定时;minutes<=0 取消。到点只 pause(不能 toggle:恰好暂停时会被反手起播)。 */
+    fun setSleepTimer(minutes: Int) {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        if (minutes <= 0) {
+            _sleepMinutesLeft.value = null
+            return
+        }
+        _sleepMinutesLeft.value = minutes
+        sleepTimerJob = viewModelScope.launch {
+            repeat(minutes) {
+                delay(60_000)
+                val left = (_sleepMinutesLeft.value ?: return@launch) - 1
+                if (left <= 0) {
+                    playerController.pause()
+                    _sleepMinutesLeft.value = null
+                    return@launch
+                }
+                _sleepMinutesLeft.value = left
+            }
+        }
+    }
+
+    fun cancelSleepTimer() = setSleepTimer(0)
+
     fun next() = playerController.skipToNext()
     fun previous() = playerController.skipToPrevious()
     fun seekTo(ms: Long) = playerController.seekTo(ms)
@@ -579,7 +615,7 @@ class MainViewModel(
         _queueNotice.value = null
     }
 
-    /** 队列抽屉下载钮:下载当前播放曲(已下载过的重下=覆盖更新,无害)。 */
+    /** 队列抽屉下载钮:下载当前播放曲。走 DownloadManager 队列(进度/取消见下载页)。 */
     fun downloadCurrentSong(context: Context) {
         val ps = _state.value.player
         val bvid = ps.currentMediaId ?: return
@@ -596,52 +632,27 @@ class MainViewModel(
     }
 
     /** 歌单详情行菜单「下载」:任意歌曲,不必在播放队列里。 */
-    fun downloadSong(context: Context, song: Song) = downloadSong(context, song.bvid, song)
+    fun downloadSong(context: Context, song: Song) {
+        downloadSong(context, song.bvid, song)
+    }
+
+    /** 批量下载(歌单/合集详情「下载全部」):逐首入队,队列自动去重已在队/已下载的。 */
+    fun downloadAll(context: Context, songs: List<Song>) {
+        val manager = (context.applicationContext as AvSongApp).downloadManager
+        val n = manager.enqueueAll(songs)
+        _queueNotice.value = if (n > 0) "已加入下载队列 $n 首" else "没有可下载的新歌曲"
+    }
 
     /**
-     * 下载核心:直链现取(绝不缓存,~3h 过期)→ BiliHttp(自带 Referer)流式存 MUSIC 目录。
-     * 文件名带 bvid 前缀(`<bvid>_<标题>.m4a`):同名歌不再互相覆盖,bvid 即去重键(重下=覆盖更新)。
-     * 落盘成功后写 DownloadedStore 元数据(「已下载」页的数据源)。
-     * 反馈走 downloadMessage→Toast(抽屉等独立窗口会盖住 Snackbar)。
+     * 入队下载。去重逻辑在 DownloadManager(已在队/已下载跳过);
+     * 进度/取消/重试在「已下载」页可见,这里不再弹 Toast。
      */
     private fun downloadSong(context: Context, bvid: String, song: Song) {
-        viewModelScope.launch(Dispatchers.IO) {
-            _downloadMessage.value = "开始下载:${song.title}"
-            try {
-                val url = BiliSongRepository.audioUrlBlocking(bvid)
-                val request = okhttp3.Request.Builder().url(url).build()
-                val store = (context.applicationContext as AvSongApp).downloadedStore
-                var fileName = ""
-                var size = 0L
-                BiliHttp.client.newCall(request).execute().use { resp ->
-                    if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code}")
-                    val dir = store.musicDir() ?: throw java.io.IOException("外部存储不可用")
-                    val safe = song.title.replace(Regex("""[\/:*?"<>|]"""), "_").take(80)
-                    val file = java.io.File(dir, "${bvid}_$safe.m4a")
-                    fileName = file.name
-                    resp.body?.byteStream()?.use { input ->
-                        file.outputStream().use { output -> input.copyTo(output) }
-                    } ?: throw java.io.IOException("空响应体")
-                    size = file.length()
-                }
-                store.add(
-                    dev.avsong.data.DownloadedTrack(
-                        bvid = bvid,
-                        title = song.title,
-                        artist = song.artist,
-                        coverUrl = song.coverUrl,
-                        fileName = fileName,
-                        durationSec = song.durationSec,
-                        sizeBytes = size,
-                        downloadedAt = System.currentTimeMillis(),
-                    ),
-                )
-                _downloadMessage.value = "下载完成:${song.title}"
-            } catch (e: Exception) {
-                _downloadMessage.value = "下载失败:${e.message}"
-            }
-        }
+        val manager = (context.applicationContext as AvSongApp).downloadManager
+        val queued = manager.enqueue(song)
+        if (queued) _downloadMessage.value = "已加入下载队列:${song.title}"
     }
+
     fun removeFromQueue(index: Int) = playerController.removeAt(index)
     fun moveInQueue(from: Int, to: Int) = playerController.moveItem(from, to)
 

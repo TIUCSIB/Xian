@@ -1,8 +1,10 @@
 package dev.avsong.ui.downloads
 
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,10 +12,12 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -30,11 +34,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.avsong.AvSongApp
 import dev.avsong.data.DownloadedTrack
@@ -66,6 +72,7 @@ fun DownloadedScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val tracks by app.downloadedStore.state.collectAsState()
+    val downloadTasks by app.downloadManager.tasks.collectAsState()
     var deleteTarget by remember { mutableStateOf<DownloadedTrack?>(null) }
     // 本地搜索:纯内存过滤,不走网络(与歌单详情页的搜索态同款交互,但无需 loadAll)
     var searching by remember { mutableStateOf(false) }
@@ -138,6 +145,63 @@ fun DownloadedScreen(
                 if (allSongs.isNotEmpty()) {
                     IconButton(onClick = { searching = true }) {
                         Icon(Icons.Rounded.Search, contentDescription = "搜索")
+                    }
+                }
+            }
+        }
+        // 下载任务条:排队/进行中/失败的任务逐条显示(进度+取消/重试);完成即消失
+        if (downloadTasks.isNotEmpty()) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            ) {
+                downloadTasks.forEach { t ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                t.title,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            val status = when {
+                                t.state == dev.avsong.data.DownloadManager.State.QUEUED -> "排队中"
+                                t.state == dev.avsong.data.DownloadManager.State.FAILED -> "失败:${t.error}"
+                                t.progress in 0..100 -> "下载中 $t.progress%".replace("t.progress", t.progress.toString())
+                                else -> "下载中"
+                            }
+                            Text(
+                                status,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (t.state == dev.avsong.data.DownloadManager.State.FAILED) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (t.state == dev.avsong.data.DownloadManager.State.RUNNING && t.progress in 0..100) {
+                                LinearProgressIndicator(
+                                    progress = { t.progress / 100f },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 4.dp),
+                                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                )
+                            }
+                        }
+                        when (t.state) {
+                            dev.avsong.data.DownloadManager.State.FAILED -> TextButton(onClick = { app.downloadManager.retry(t.bvid) }) {
+                                Text("重试")
+                            }
+                            else -> IconButton(onClick = { app.downloadManager.cancel(t.bvid) }) {
+                                Icon(Icons.Rounded.Close, contentDescription = "取消下载")
+                            }
+                        }
                     }
                 }
             }

@@ -31,6 +31,8 @@ fun CollectionContentScreen(
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
     onDownload: (Song) -> Unit,
+    /** ⋮ 菜单「下载全部」:把已加载的歌曲整批入队(队列自动去重已下载/已在队的)。 */
+    onDownloadAll: (List<Song>) -> Unit,
     currentMediaId: String?,
     isPlaying: Boolean,
 ) {
@@ -65,7 +67,10 @@ fun CollectionContentScreen(
         onRemoveSong = null,
         loadingAll = loadingAll,
         onLoadAll = vm::loadAll,
-        menuActions = listOf("取消订阅" to { showUnsubConfirm = true }),
+        menuActions = listOf(
+            "下载全部(已加载 " + state.songs.size.toString() + " 首)" to { onDownloadAll(state.songs) },
+            "取消订阅" to { showUnsubConfirm = true },
+        ),
     )
 
     if (showUnsubConfirm) {
