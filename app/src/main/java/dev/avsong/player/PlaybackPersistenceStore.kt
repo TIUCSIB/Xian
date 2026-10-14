@@ -14,8 +14,19 @@ import kotlinx.serialization.json.Json
  */
 class PlaybackPersistenceStore(context: Context) {
 
+    /**
+     * uri = 该曲的播放地址(bili:// 或已下载曲的 file://)。
+     * ⚠ 旧快照无此字段(@Serializable 默认值兼容),restore 缺省回退 bili://<bvid>;
+     * 没有它,本地文件队列重启会被还原成在线 bili://,离线可播性丢失。
+     */
     @Serializable
-    data class PersistedItem(val bvid: String, val title: String, val artist: String, val cover: String?)
+    data class PersistedItem(
+        val bvid: String,
+        val title: String,
+        val artist: String,
+        val cover: String?,
+        val uri: String? = null,
+    )
 
     @Serializable
     data class Snapshot(

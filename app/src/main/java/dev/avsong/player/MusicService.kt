@@ -131,7 +131,8 @@ class MusicService : MediaSessionService() {
     private fun PlaybackPersistenceStore.PersistedItem.toMediaItem(): MediaItem =
         MediaItem.Builder()
             .setMediaId(bvid)
-            .setUri("bili://$bvid")
+            // 已下载曲带 file://,直接离线还原;旧快照/在线曲回退 bili:// 现取
+            .setUri(uri?.takeIf { it.isNotBlank() } ?: "bili://$bvid")
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(title)
@@ -275,6 +276,8 @@ class MusicService : MediaSessionService() {
                 title = md.title?.toString().orEmpty(),
                 artist = md.artist?.toString().orEmpty(),
                 cover = md.artworkUri?.toString(),
+                // Media3 1.x:uri 挪进了 localConfiguration(裸 m.uri 不存在)
+                uri = m.localConfiguration?.uri?.toString(),
             )
         }.filter { it.bvid.isNotBlank() }
 

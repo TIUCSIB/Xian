@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Queue
 import androidx.compose.material3.CircularProgressIndicator
@@ -100,9 +101,11 @@ fun SongList(
     /** 当前播放曲的 mediaId:命中行的歌名高亮 + 播放中封面盖音波条徽章。 */
     currentMediaId: String? = null,
     isPlaying: Boolean = false,
-    /** 非空时长按行弹「下一首播放/加入队列」菜单(不换队列);不传则无长按。 */
+    /** 非空时长按行弹「下一首播放/加入队列/删除」菜单(不换队列);不传则无长按。 */
     onPlayNext: ((Song) -> Unit)? = null,
     onAddToQueue: ((Song) -> Unit)? = null,
+    /** 行菜单「删除」项(已下载页用:删文件+元数据);一般调用方传 null。 */
+    onRemove: ((Song) -> Unit)? = null,
     hasMore: Boolean = false,
     loadingMore: Boolean = false,
     onLoadMore: () -> Unit = {},
@@ -134,6 +137,7 @@ fun SongList(
                 onClick = { onPlay(songs, index) },
                 onPlayNext = onPlayNext,
                 onAddToQueue = onAddToQueue,
+                onRemove = onRemove,
             )
         }
         if (loadingMore) {
@@ -160,6 +164,7 @@ fun SongRow(
     isPlaying: Boolean = false,
     onPlayNext: ((Song) -> Unit)? = null,
     onAddToQueue: ((Song) -> Unit)? = null,
+    onRemove: ((Song) -> Unit)? = null,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     // 浅色/夜间分支用:主题不带 isDark 标记,以 surface 亮度判定(两套方案的 surface 差异极大)
@@ -172,7 +177,7 @@ fun SongRow(
             .combinedClickable(
                 onClick = onClick,
                 // 点歌=换队是默认逻辑;长按是无损插入入口(与主流音乐软件的行内菜单一致)
-                onLongClick = if (onPlayNext != null || onAddToQueue != null) {
+                onLongClick = if (onPlayNext != null || onAddToQueue != null || onRemove != null) {
                     { menuExpanded = true }
                 } else null,
             )
@@ -277,6 +282,18 @@ fun SongRow(
                     DropdownMenuItem(
                         text = { Text("加入队列") },
                         leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, null) },
+                        onClick = {
+                            menuExpanded = false
+                            action(song)
+                        },
+                    )
+                }
+                onRemove?.let { action ->
+                    DropdownMenuItem(
+                        text = { Text("删除") },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error)
+                        },
                         onClick = {
                             menuExpanded = false
                             action(song)

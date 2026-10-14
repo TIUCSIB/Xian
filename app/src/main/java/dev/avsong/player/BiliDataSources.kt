@@ -33,8 +33,11 @@ object BiliDataSources {
 
     fun create(context: Context): ResolvingDataSource.Factory {
         val http = BiliHttpDataSourceFactory.create()
+        // DefaultDataSource 按 scheme 分发:file://(已下载离线播)/content:// → 各自原生源,
+        // http(s)(bili:// 解析后的直链)→ 带 Referer 的 BiliHttp。裸挂 http 源会让本地文件打不开(实测踩过)。
+        val delegate = androidx.media3.datasource.DefaultDataSource.Factory(context, http)
 
-        return ResolvingDataSource.Factory(http,
+        return ResolvingDataSource.Factory(delegate,
             object : ResolvingDataSource.Resolver {
                 override fun resolveDataSpec(dataSpec: DataSpec): DataSpec {
                     val uri = dataSpec.uri
