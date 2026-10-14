@@ -33,11 +33,11 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val app = applicationContext as AvSongApp
-            val dark by app.themeStore.dark.collectAsState()
+            val theme by app.themeStore.state.collectAsState()
             // 状态栏图标颜色跟随 app 主题(app 不随系统,enableEdgeToEdge 的默认判定不够用)
             val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-            SideEffect { insetsController.isAppearanceLightStatusBars = !dark }
-            AvSongTheme(darkTheme = dark) {
+            SideEffect { insetsController.isAppearanceLightStatusBars = !theme.dark }
+            AvSongTheme(dark = theme.dark, seed = theme.seed, customHue = theme.customHue) {
                 val navController = rememberNavController()
                 val viewModel = rememberMainViewModel()
                 AvSongApp(navController = navController, viewModel = viewModel)

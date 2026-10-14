@@ -11,3 +11,7 @@ captures/
 *.aab
 
 
+
+# AI 助手/UI 自动化残留
+.zcode/
+ui_t.xml

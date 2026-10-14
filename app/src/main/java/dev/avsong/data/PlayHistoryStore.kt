@@ -44,13 +44,14 @@ class PlayHistoryStore(context: Context) {
         _history.value = entries.map { it.toSong() }
     }
 
-    /** 起播即记录:同曲去重置顶,超出上限丢弃最旧的。 */
+    /** 起播即记录:同曲去重置顶,超出上限丢弃最旧的(上限在设置页可调,0=不限)。 */
     suspend fun record(song: Song) {
         if (song.bvid.isBlank() || song.title.isBlank()) return
         val entry = HistoryEntry(song.bvid, song.title, song.artist, song.coverUrl, song.durationSec)
         // 旧列表先转回 entry 再拼接,避免 List<Song>/List<HistoryEntry> 混成 List<Any>
+        val limit = dev.avsong.ui.settings.SettingsStore.state.value.historyLimit
         val next = (listOf(entry) + _history.value.map { it.toEntry() }.filter { it.bvid != entry.bvid })
-            .take(50)
+            .let { if (limit > 0) it.take(limit) else it }
         _history.value = next.map { it.toSong() }
         datastore.edit { it[KEY] = json.encodeToString(next) }
     }
