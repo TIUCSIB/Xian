@@ -58,6 +58,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -128,6 +130,9 @@ fun LibraryScreen(
     var showLoginDialog by remember { mutableStateOf(false) }
     var cacheToast by remember { mutableStateOf<String?>(null) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    // 睡眠定时自定义输入(1–720 分钟)
+    var showSleepCustomDialog by remember { mutableStateOf(false) }
+    var sleepCustomText by remember { mutableStateOf("") }
     var cacheBytes by remember { mutableStateOf<Long?>(null) }
     var cacheRefreshTick by remember { mutableStateOf(0) }
     val loggedIn = loginState as? LoginUiState.LoggedIn
@@ -183,6 +188,7 @@ fun LibraryScreen(
                 onHistoryChange = { app.settingsStore.setHistoryLimit(it) },
                 sleepMinutesLeft = sleepMinutesLeft,
                 onSetSleepTimer = onSetSleepTimer,
+                onCustomSleep = { showSleepCustomDialog = true },
                 downloadedCount = downloadedTracks.size,
                 onOpenDownloads = onOpenDownloads,
                 cacheLabel = cacheBytes?.let { formatCacheSize(it) },
@@ -192,6 +198,53 @@ fun LibraryScreen(
                 onLogout = { showLogoutConfirm = true },
             )
         }
+    }
+
+    // 睡眠定时自定义分钟数:数字键盘,1–720 校验(超出给行内错误提示)
+    if (showSleepCustomDialog) {
+        val v = sleepCustomText.toIntOrNull()
+        val invalid = v == null || v !in 1..720
+        AlertDialog(
+            onDismissRequest = { showSleepCustomDialog = false },
+            title = { Text("自定义睡眠定时") },
+            text = {
+                Column {
+                    Text(
+                        "播放到设定时长后自动暂停(1–720 分钟)。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = sleepCustomText,
+                        onValueChange = { sleepCustomText = it.filter { c -> c.isDigit() }.take(3) },
+                        singleLine = true,
+                        isError = sleepCustomText.isNotEmpty() && invalid,
+                        supportingText = {
+                            if (sleepCustomText.isNotEmpty() && invalid) {
+                                Text("请输入 1–720 之间的整数", color = MaterialTheme.colorScheme.error)
+                            }
+                        },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                        ),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !invalid,
+                    onClick = {
+                        showSleepCustomDialog = false
+                        v?.let { onSetSleepTimer(it) }
+                        sleepCustomText = ""
+                    },
+                ) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSleepCustomDialog = false }) { Text("取消") }
+            },
+        )
     }
 
     // 退出登录确认:退出后需重新扫码,防误触
@@ -369,6 +422,7 @@ private fun SettingsCard(
     onHistoryChange: (Int) -> Unit,
     sleepMinutesLeft: Int?,
     onSetSleepTimer: (Int) -> Unit,
+    onCustomSleep: () -> Unit,
     downloadedCount: Int,
     onOpenDownloads: () -> Unit,
     cacheLabel: String?,
@@ -456,6 +510,16 @@ private fun SettingsCard(
                         },
                     )
                 }
+                // 自定义分钟数:当前值不是预设档时显示选中(回显当前值)
+                SettingsOptionRow(
+                    label = if (sleepMinutesLeft != null && sleepMinutesLeft !in listOf(15, 30, 60, 90))
+                        "自定义(${sleepMinutesLeft} 分钟)" else "自定义…",
+                    selected = sleepMinutesLeft != null && sleepMinutesLeft !in listOf(15, 30, 60, 90),
+                    onClick = {
+                        onCustomSleep()
+                        expanded = null
+                    },
+                )
             }
         }
         // 主题组
