@@ -296,8 +296,12 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                             )
                         }
                     } else {
+                        // 打开抽屉时定格历史列表:点行起播会把该曲「去重置顶」写回 store,
+                        // 实时列表会让被点的歌瞬间跳到顶部(用户报的 bug)。
+                        // 定格后本次抽屉内顺序不变(高亮/音波条仍实时),下次打开才见新序。
+                        val historySnapshot = remember { playHistory }
                         SongList(
-                            songs = playHistory,
+                            songs = historySnapshot,
                             onPlay = { songs, index -> viewModel.playFromHistory(songs[index]) },
                             showPlayButton = false,
                             currentMediaId = state.player.currentMediaId,
@@ -399,6 +403,9 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onPlayCollection = { collection ->
                             viewModel.playCollectionPlaylist(collection.mid, collection.seasonId)
                         },
+                        onPlayPause = viewModel::playPause,
+                        player = state.player,
+                        playingId = viewModel.playingPlaylistId(),
                         onLogin = { navController.navigate(Routes.LOGIN) },
                     )
                 }
