@@ -10,6 +10,7 @@ import okio.Path.Companion.toOkioPath
 import dev.avsong.data.BiliHttp
 import dev.avsong.data.BiliSongRepository
 import dev.avsong.data.CollectionStore
+import dev.avsong.data.DownloadedStore
 import dev.avsong.data.FavoriteRepository
 import dev.avsong.data.PlayHistoryStore
 import dev.avsong.data.SearchHistoryStore
@@ -41,10 +42,16 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
     lateinit var collectionStore: CollectionStore
         private set
 
+    lateinit var downloadedStore: DownloadedStore
+        private set
+
     lateinit var playHistoryStore: PlayHistoryStore
         private set
 
     lateinit var themeStore: ThemeStore
+        private set
+
+    lateinit var settingsStore: dev.avsong.ui.settings.SettingsStore
         private set
 
     /** 真实 B 站数据源(匿名单例,UI 与 ExoPlayer resolver 共用)。 */
@@ -57,8 +64,11 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
         favoriteRepository = FavoriteRepository(authStore)
         searchHistoryStore = SearchHistoryStore(this)
         collectionStore = CollectionStore(this)
+        downloadedStore = DownloadedStore(this)
         playHistoryStore = PlayHistoryStore(this)
         themeStore = ThemeStore(this)
+        dev.avsong.ui.settings.SettingsStore.init(this)
+        settingsStore = dev.avsong.ui.settings.SettingsStore
 
         // 登录态 → OkHttp 拦截器的 Cookie 注入点(含启动时的持久化恢复)
         appScope.launch {
@@ -67,8 +77,12 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
         }
         // 已保存合集(UP 主合集=歌单)的本地持久化恢复
         appScope.launch { collectionStore.load() }
+        // 已下载歌曲元数据恢复(自愈剔除文件已不存在的条目;孤儿扫描在下载页打开时做)
+        appScope.launch { downloadedStore.load() }
         // 日夜间模式持久化恢复
         appScope.launch { themeStore.load() }
+        // 音质/历史上限等设置恢复(仓库层选路直接读它的内存流)
+        appScope.launch { settingsStore.load() }
     }
 
     /**

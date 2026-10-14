@@ -162,13 +162,22 @@ GET api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=<mid>&type=2       
   · 加 &rid=<aid>&biz_type=2 查询时,fav_state:1=已收藏 0=未收藏(用于弹窗回显勾选;此场景用 list-all 即可,只需要 id/title)
   · 2026-10-11 实测:歌单网格卡片全无封面,根因是 list-all 不回 cover;换 created/list(网页 favlist 同款)后正常
 
-# 我订阅的收藏夹
-GET api.bilibili.com/x/v3/fav/folder/collected/list?up_mid=<mid>&pn=1&ps=20
-→ data.list[i] 同上 + upper.name(创建者)
+# 我订阅的收藏夹 + 我追的合集(混装列表!)
+GET api.bilibili.com/x/v3/fav/folder/collected/list?up_mid=<mid>&pn=1&ps=20&platform=web
+→ data.list[i] 同上 + upper.name(创建者) + **type**(11=收藏夹,21=合集)
+  · ⚠ **必须带 platform=web** 才会返回合集(追合集)条目;不带则列表里只剩收藏夹
+    (2026-10-12 实测:用户在 B 站追了「私人致享」,app 完全看不到 → 加参数后出现)
+  · ⚠ 合集条目:id=**season_id**、mid/upper=UP 主;不拆分会被当收藏夹渲染(点开即错)
+  · 取消追合集:POST /x/v3/fav/season/unfav  season_id=<id>&platform=web(+csrf;未追过会报错)
+  · 取消收藏收藏夹:POST /x/v3/fav/folder/unfav  media_id=<folderId>(网页端同款,暂未接)
+  · UP mid 缺失时可按 season_id 反查:GET /x/space/fav/season/list?season_id=&pn=&ps=(匿名可用,
+    响应 info{title,cover,upper{mid,name},media_count} + medias[] 即合集内容)
 
 # 收藏夹内容
 GET api.bilibili.com/x/v3/fav/resource/list?media_id=<folderId>&pn=1&ps=20&keyword=
 → data.medias[i]:{id(=aid!), bvid, title, cover, duration, upper.name} + data.has_more
+  · ⚠ 收藏夹被清空后 medias 回 **null**(不是 []),DTO 必须声明 `List<FavMedia>?`,否则 kotlinx 解析整个响应抛
+    "Expected start of the array '[' but had 'n'"(实测:某夹唯一一首取消收藏后,进详情页整页报错)
   · ⚠ medias 里没有独立 aid 字段,id 就是 aid(收藏/取消要用)
 
 # 写(form POST,带 csrf)
@@ -258,3 +267,76 @@ GET /x/web-interface/card?mid=<mid>
 
 **三条坑**:① 曲目 `duration` 是秒;② 列表 key 用 bvid,加载合并时 `distinctBy { it.bvid }`(大合集翻页可能重复);③ `hasMore = total > pageNum * pageSize`,别依赖 archives 条数。
 
+
+## 15. Cookie 续期(登录态保活,2026-10-13 加)
+
+SESSDATA 临近过期时用 refresh_token 换一套新 Cookie,免重新扫码。实现:`data/auth/CookieRefresh.kt`。
+
+```
+① 检查是否该续
+GET passport.bilibili.com/x/passport-login/web/cookie/info?csrf=<bili_jct>
+  Cookie: SESSDATA=…; bili_jct=…; DedeUserID=…
+→ data.refresh(bool: 是否需要续) + data.timestamp(⚠ 下面 RSA 的加密基准)
+
+② 算 correspondPath
+RSA-OAEP(SHA-256) 加密字符串 "refresh_<data.timestamp>" → 输出十六进制(512 字符)
+公钥固定(网页端内置,公开不变):
+-----BEGIN PUBLIC KEY-----
+MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDLgd2OAkcGVtoE3ThUREbio0Eg
+Uc/prcajMKXvkCKFCWhJYJcLkcM2DKKcSeFpD/j6Boy538YXnR6VhcuUJOhH2x71
+nzPjfdTcqMz7djHum0qSZA0AyCBDABUqCrfNgCiJ00Ra7GmRj+YCK1NJEuewlb40
+JNrRuoEUXpabUzGB8QIDAQAB
+-----END PUBLIC KEY-----
+⚠⚠ 两个必踩的坑(都会表现为 correspond 页面 404,极易误判):
+   ① **必须用 ① 返回的 timestamp**,用本地时间戳一律 404(实测:server_ts→200,local_ms/local_s→404)。
+      本地时钟与服务器有偏差,该字段就是为此提供的基准 —— 公开实现里没写清这点。
+   ② **Android/JDK 的 `OAEPWithSHA-256AndMGF1Padding` 默认 MGF1 用 SHA-1**,而 B 站按
+      「OAEP-SHA256 + MGF1-SHA256」解密。不显式传 OAEPParameterSpec 会算出错误密文 → 404。
+      实测(JVM 21,同一 timestamp 加密两次对比):
+        MGF1ParameterSpec.SHA256 → HTTP 200 ✓
+        默认(不传 spec,即 MGF1-SHA1)→ HTTP 404 ✗
+      Kotlin 写法:
+        cipher.init(Cipher.ENCRYPT_MODE, key, OAEPParameterSpec(
+            "SHA-256", "MGF1", MGF1ParameterSpec.SHA256, PSource.PSpecified.DEFAULT))
+
+③ 取 refresh_csrf
+GET www.bilibili.com/correspond/1/<correspondPath>
+  Cookie: 同上(带登录态)
+→ 响应是 **gzip**(Content-Encoding: gzip),解压后 HTML 里抠:
+   <div id="1-name">(.+?)</div>  → 32 位 hex = refresh_csrf
+⚠ 不解压抠不到(OkHttp 会自动解压,Python urllib 要手动 gzip.decompress)
+
+④ 换新 Cookie
+POST passport.bilibili.com/x/passport-login/web/cookie/refresh
+  Cookie: 旧三件套
+  Form: csrf=<旧 bili_jct> & refresh_csrf=<③> & refresh_token=<ac_time_value> & source=main_web
+→ Set-Cookie 给**新** SESSDATA / bili_jct / DedeUserID
+→ body: {"code":0, "data":{"refresh_token":"<新令牌>"}}
+⚠ refresh_token 为空 → code:-400 请求错误(实测)。它是硬性必需
+
+⑤ 确认(使旧 refresh_token 失效)
+POST passport.bilibili.com/x/passport-login/web/confirm/refresh
+  Cookie: **新**三件套
+  Form: csrf=<新 bili_jct> & refresh_token=<**旧** ac_time_value>
+⚠ refresh_token 用旧的(不是 ④ 返回的新值);csrf 用新的
+```
+
+**⚠ ac_time_value 从哪来(最大的坑)**:扫码登录的 Set-Cookie **不含它**。它在**轮询成功响应的 `data.refresh_token` 字段**里:
+
+```
+GET passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=<key>&source=main-fe-header
+→ code 0 时:
+   data.url          = "https://passport.bilibili.com/...?SESSDATA=…&bili_jct=…&DedeUserID=…"   ← 三件套在这
+   data.refresh_token = "<ac_time_value>"                                                        ← 续期令牌在这
+```
+
+⚠ **两个位置别搞混**(实测踩过):三件套从 `data.url` 的查询参数里解析,而 `refresh_token` 是**平级字段**、不在 url 里。
+BiliTune 的 `_cookiesFromLoginUrl` 只解析 url(含 `ac_time_value` 参数),照它推断会拿到 null —— 权威依据是 bilibili-api `login_v2.py:352`(`ac_time_value=return_data["data"]["refresh_token"]`)。
+
+所以 `QrLogin.poll` 要取 `data.refreshToken` 持久化;拿不到就等于放弃续期能力(只能等过期后重新扫码)。**旧登录会话没有这个字段,必须重新扫码一次才能获得续期能力。**
+
+**服务端 token 校验(实测探测)**:refresh 接口对 token 有明确校验 —— 空 token → `code:-400 请求错误`;假 token → `code:86032 refreshToken已过期`。即链路正确时,失败会明确告诉你是 token 的问题。
+
+**失败语义**:续期是「锦上添花」——任何一步失败都只记日志、不动本地登录态(不能因为续期失败就把用户踢下线)。成功才整体替换三件套 + 新令牌(必须原子落盘,半新半旧会让所有接口 403)。
+
+**并发防护**:启动检查与「我的」页检查可能并发,而续期会轮换 Cookie;`CookieRefresh` 用 Mutex 串行化 + 进程内只成功续一次(并发两次会互相覆盖)。

@@ -85,6 +85,7 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.runtime.remember
 import dev.avsong.ui.common.SongList
 import dev.avsong.ui.common.StateHint
+import dev.avsong.ui.downloads.DownloadedScreen
 import dev.avsong.ui.queue.QueueContent
 import dev.avsong.ui.search.SearchScreen
 
@@ -96,6 +97,7 @@ object Routes {
     const val LOGIN = "login"
     const val FOLDER = "library/folder/{folderId}?title={title}"
     const val COLLECTION = "library/collection/{mid}/{seasonId}?title={title}"
+    const val DOWNLOADED = "library/downloaded"
 
     fun folder(id: Long, title: String): String =
         "library/folder/$id?title=${android.net.Uri.encode(title)}"
@@ -401,7 +403,20 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                     )
                 }
                 composable(Routes.MINE) {
-                    LibraryScreen(onLogin = { navController.navigate(Routes.LOGIN) })
+                    LibraryScreen(
+                        onLogin = { navController.navigate(Routes.LOGIN) },
+                        onOpenDownloads = { navController.navigate(Routes.DOWNLOADED) },
+                    )
+                }
+                composable(Routes.DOWNLOADED) {
+                    DownloadedScreen(
+                        onBack = { navController.popBackStack() },
+                        onPlay = { songs, index -> viewModel.playQueue(songs, index) },
+                        onPlayNext = viewModel::playNext,
+                        onAddToQueue = viewModel::addToQueue,
+                        currentMediaId = state.player.currentMediaId,
+                        isPlaying = state.player.isPlaying,
+                    )
                 }
                 composable(Routes.LOGIN) {
                     LoginScreen(onBack = { navController.popBackStack() })
