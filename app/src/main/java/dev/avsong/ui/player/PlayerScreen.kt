@@ -118,6 +118,13 @@ fun PlayerScreen(
         position = positionProvider()
     }
 
+    // seek 必须同步刷新本地 position:暂停态下上面的 ticker 不跑,只发 onSeek 的话
+    // 播放器位置变了但 UI 还显示旧采样,松手"跳回原位"(用户报的 bug);恢复播放后才见新位置
+    fun seekAndShow(ms: Long) {
+        position = ms
+        onSeek(ms)
+    }
+
     // 根节点消费点击:面板是覆盖层,不拦截的话点击会穿透到后面的内容(实测踩过)
     Box(
         Modifier
@@ -179,7 +186,7 @@ fun PlayerScreen(
                 LyricView(
                     lyric = lyric,
                     positionMs = position,
-                    onSeek = onSeek,
+                    onSeek = ::seekAndShow,
                     onArtwork = state.artworkUri != null,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -247,7 +254,7 @@ fun PlayerScreen(
                 val dur = if (state.durationMs > 0) state.durationMs.toFloat() else 1f
                 WaveformSeekBar(
                     progress = (position.toFloat() / dur).coerceIn(0f, 1f),
-                    onSeekFraction = { frac -> onSeek((frac * dur).roundToLong()) },
+                    onSeekFraction = { frac -> seekAndShow((frac * dur).roundToLong()) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Row(
