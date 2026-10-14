@@ -156,9 +156,7 @@ fun LibraryScreen(
         Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .background(MaterialTheme.colorScheme.background)
-            // 内容(账户头 + 三组设置卡)超出屏幕可滚动(睡眠定时加入后矮屏上「退出登录」被挤没)
-            .verticalScroll(rememberScrollState()),
+            .background(MaterialTheme.colorScheme.background),
     ) {
         FunctionBar(
             isDark = theme.dark,
@@ -169,23 +167,31 @@ fun LibraryScreen(
             },
         )
         AccountHeader(loginState, onLogin = { showLoginDialog = true })
-        SettingsCard(
-            themeLabel = theme.customHue?.let { "自定义" } ?: theme.seed.label,
-            onOpenTheme = { showThemeSheet = true },
-            quality = settings.quality,
-            onQualityChange = { app.settingsStore.setQuality(it) },
-            historyLimit = settings.historyLimit,
-            onHistoryChange = { app.settingsStore.setHistoryLimit(it) },
-            sleepMinutesLeft = sleepMinutesLeft,
-            onSetSleepTimer = onSetSleepTimer,
-            downloadedCount = downloadedTracks.size,
-            onOpenDownloads = onOpenDownloads,
-            cacheLabel = cacheBytes?.let { formatCacheSize(it) },
-            onClearCache = { clearAppCache() },
-            // 已登录才出现「退出登录」行(未登录时该行整个不渲染)
-            showLogout = loggedIn != null,
-            onLogout = { showLogoutConfirm = true },
-        )
+        // 只有设置卡滚动(用户反馈:账户头不该跟着动);weight(1f) 吃掉剩余高度,
+        // 内容超出时在卡片区域内滚,迷你条/底栏不会遮住滚出的内容
+        Column(
+            Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            SettingsCard(
+                themeLabel = theme.customHue?.let { "自定义" } ?: theme.seed.label,
+                onOpenTheme = { showThemeSheet = true },
+                quality = settings.quality,
+                onQualityChange = { app.settingsStore.setQuality(it) },
+                historyLimit = settings.historyLimit,
+                onHistoryChange = { app.settingsStore.setHistoryLimit(it) },
+                sleepMinutesLeft = sleepMinutesLeft,
+                onSetSleepTimer = onSetSleepTimer,
+                downloadedCount = downloadedTracks.size,
+                onOpenDownloads = onOpenDownloads,
+                cacheLabel = cacheBytes?.let { formatCacheSize(it) },
+                onClearCache = { clearAppCache() },
+                // 已登录才出现「退出登录」行(未登录时该行整个不渲染)
+                showLogout = loggedIn != null,
+                onLogout = { showLogoutConfirm = true },
+            )
+        }
     }
 
     // 退出登录确认:退出后需重新扫码,防误触
