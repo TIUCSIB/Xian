@@ -336,6 +336,7 @@ private fun FeaturedSongCard(
                     .align(Alignment.BottomEnd)
                     .padding(16.dp)
                     .size(width = 24.dp, height = 18.dp),
+                onArtwork = true,
             )
         } else {
             Icon(

@@ -61,6 +61,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import dev.avsong.data.FavoriteRepository
+import dev.avsong.player.PlayerState
+import dev.avsong.ui.common.PlayingEqualizer
 import dev.avsong.data.SavedCollection
 import dev.avsong.ui.common.FlatRefreshIndicator
 import dev.avsong.ui.login.LoginUiState
@@ -82,6 +84,10 @@ fun PlaylistScreen(
     onOpenCollection: (SavedCollection) -> Unit,
     onPlayFolder: (FavoriteRepository.Folder) -> Unit,
     onPlayCollection: (SavedCollection) -> Unit,
+    onPlayPause: () -> Unit,
+    player: PlayerState,
+    /** 正在播的歌单 id("folder:<id>"/"collection:<seasonId>");null=没有歌单在播。 */
+    playingId: String?,
     onLogin: () -> Unit,
 ) {
     val vm = rememberLibraryViewModel()
@@ -96,6 +102,7 @@ fun PlaylistScreen(
     LaunchedEffect(Unit) { vm.refreshIfLoaded() }
     var pendingUnsub by remember { mutableStateOf<SavedCollection?>(null) }
     val scope = rememberCoroutineScope()
+
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         // 下拉刷新(2026-10-11 用户要求):刷新收藏夹列表(合集来自本地订阅,不需刷新)。
@@ -169,6 +176,9 @@ fun PlaylistScreen(
                         count = collection.total,
                         onOpen = { onOpenCollection(collection) },
                         onPlay = { onPlayCollection(collection) },
+                        onPause = onPlayPause,
+                        isCurrent = playingId == "collection:${collection.seasonId}",
+                        isPlaying = player.isPlaying,
                         // 长按 → 取消订阅(同时取消 B 站「追合集」+ 移除本地,确认后执行防误触)
                         menuActions = listOf("取消订阅" to { pendingUnsub = collection }),
                     )
@@ -249,6 +259,9 @@ fun PlaylistScreen(
                                 isPrivate = folder.isPrivate,
                                 onOpen = { onOpenFolder(folder) },
                                 onPlay = { onPlayFolder(folder) },
+                                onPause = onPlayPause,
+                                isCurrent = playingId == "folder:${folder.id}",
+                                isPlaying = player.isPlaying,
                                 // 长按 → 删除收藏夹(B 站远端破坏性操作,必须确认)
                                 menuActions = listOf("删除收藏夹" to { pendingDelete = folder }),
                             )
@@ -265,6 +278,9 @@ fun PlaylistScreen(
                                     isPrivate = folder.isPrivate,
                                     onOpen = { onOpenFolder(folder) },
                                     onPlay = { onPlayFolder(folder) },
+                                    onPause = onPlayPause,
+                                    isCurrent = playingId == "folder:${folder.id}",
+                                    isPlaying = player.isPlaying,
                                 )
                             }
                         }
@@ -364,7 +380,9 @@ private fun SectionHeader(text: String) {
 
 /**
  * 歌单网格卡片:上方正方形封面 + 下方标题。
- * 封面底部有向上渐变的黑纱遮罩,右下角裸白色播放图标(无底色)直接播整个歌单。
+ * 封面底部有向上渐变的黑纱遮罩,右下角裸白色图标(无底色)直接播整个歌单;
+ * **正在播这个歌单时图标换成动画音波条、点击变暂停;暂停中显示播放三角、点击续播**
+ * (用户 2026-10-14 要求:播放态别一直显示播放键;交互对齐首页精选卡)。
  * 徽标(左上)= 项数。
  * [menuActions] 非空时长按卡片弹操作菜单(合集=取消订阅,自建夹=删除收藏夹);
  * 菜单只负责挑动作,破坏性操作的真实确认在调用方的 AlertDialog。
@@ -377,6 +395,9 @@ private fun PlaylistCard(
     isPrivate: Boolean = false,
     onOpen: () -> Unit,
     onPlay: () -> Unit,
+    onPause: () -> Unit = {},
+    isCurrent: Boolean = false,
+    isPlaying: Boolean = false,
     menuActions: List<Pair<String, () -> Unit>> = emptyList(),
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -446,22 +467,31 @@ private fun PlaylistCard(
                 )
             }
             // 右下播放钮:裸白色图标(无底色),对比度靠底部渐变遮罩;
-            // clip 圆形必须保留——没有它 clickable 的涟漪会画成方形
+            // clip 圆形必须保留——没有它 clickable 的涟漪会画成方形。
+            // 正在播本歌单 → 音波动画(点击暂停);暂停中 → 播放三角(点击续播);
+            // 未在播 → 播放三角(点击播整个歌单)
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 6.dp, bottom = 2.dp)
                     .size(40.dp)
                     .clip(CircleShape)
-                    .clickable(onClick = onPlay),
+                    .clickable(onClick = if (isCurrent && isPlaying) onPause else onPlay),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    Icons.Rounded.PlayArrow,
-                    contentDescription = "播放整个歌单",
-                    tint = Color.White,
-                    modifier = Modifier.size(30.dp),
-                )
+                if (isCurrent && isPlaying) {
+                    PlayingEqualizer(
+                        Modifier.size(width = 22.dp, height = 16.dp),
+                        onArtwork = true,
+                    )
+                } else {
+                    Icon(
+                        Icons.Rounded.PlayArrow,
+                        contentDescription = if (isCurrent) "继续播放" else "播放整个歌单",
+                        tint = Color.White,
+                        modifier = Modifier.size(30.dp),
+                    )
+                }
             }
         }
         Row(

@@ -208,7 +208,10 @@ fun SongRow(
                         .background(Color.Black.copy(alpha = if (dark) 0.45f else 0.12f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    PlayingEqualizer(modifier = Modifier.size(width = 18.dp, height = 14.dp))
+                    PlayingEqualizer(
+                        modifier = Modifier.size(width = 18.dp, height = 14.dp),
+                        onArtwork = true,
+                    )
                 }
             }
         }
@@ -339,12 +342,16 @@ fun CoverArt(url: String?) {
  * Canvas 直接读动画值,只重绘不重组;只在「当前曲 && 正在播放」时由调用方组合,
  * 暂停或非当前曲不出现。
  *
- * 统一白色(用户要求,不再跟主题色 primary —— 浅色焦糖棕落在亮封面上看不清)。
- * 每根条带一圈深色描底:亮封面上白条靠它拉开对比,暗封面上描底融入背景不可见;
- * 这样无需加深整封面遮罩(浅色 12% 是用户调定的,再深会被嫌糊)。
+ * 配色按场景分(用户要求):[onArtwork] = true 表示音波条压在**封面**上(列表行封面遮罩/
+ * 精选卡/歌单卡播放钮)——白色 + 深色描底,亮封面也清晰,描底在暗封面融入背景不可见;
+ * false(默认)= 坐在纯色底上(队列抽屉行/歌单详情行)——主题色 primary,无描底。
  */
 @Composable
-fun PlayingEqualizer(modifier: Modifier = Modifier, color: Color = Color.White) {
+fun PlayingEqualizer(
+    modifier: Modifier = Modifier,
+    onArtwork: Boolean = false,
+    color: Color = if (onArtwork) Color.White else MaterialTheme.colorScheme.primary,
+) {
     val transition = rememberInfiniteTransition(label = "equalizer")
     val bars = List(4) { i ->
         transition.animateFloat(
@@ -362,17 +369,19 @@ fun PlayingEqualizer(modifier: Modifier = Modifier, color: Color = Color.White) 
         val gap = 2.dp.toPx()
         val barW = (size.width - gap * (n - 1)) / n
         val outline = Color.Black.copy(alpha = 0.35f)
-        val pad = 1.2.dp.toPx()
+        val pad = if (onArtwork) 1.2.dp.toPx() else 0f
         bars.forEachIndexed { i, anim ->
             val h = size.height * anim.value
             val x = i * (barW + gap)
             val y = size.height - h
-            drawRoundRect(
-                color = outline,
-                topLeft = Offset(x - pad, y - pad),
-                size = Size(width = barW + pad * 2, height = h + pad * 2),
-                cornerRadius = CornerRadius((barW + pad * 2) / 2f),
-            )
+            if (onArtwork) {
+                drawRoundRect(
+                    color = outline,
+                    topLeft = Offset(x - pad, y - pad),
+                    size = Size(width = barW + pad * 2, height = h + pad * 2),
+                    cornerRadius = CornerRadius((barW + pad * 2) / 2f),
+                )
+            }
             drawRoundRect(
                 color = color,
                 topLeft = Offset(x, y),
