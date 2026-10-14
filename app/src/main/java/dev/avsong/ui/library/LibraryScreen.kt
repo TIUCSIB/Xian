@@ -10,6 +10,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.drag
@@ -154,7 +156,9 @@ fun LibraryScreen(
         Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .background(MaterialTheme.colorScheme.background),
+            .background(MaterialTheme.colorScheme.background)
+            // 内容(账户头 + 三组设置卡)超出屏幕可滚动(睡眠定时加入后矮屏上「退出登录」被挤没)
+            .verticalScroll(rememberScrollState()),
     ) {
         FunctionBar(
             isDark = theme.dark,
