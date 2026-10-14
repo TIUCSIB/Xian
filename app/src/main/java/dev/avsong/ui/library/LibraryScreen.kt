@@ -166,10 +166,7 @@ fun LibraryScreen(
         FunctionBar(
             isDark = theme.dark,
             onToggleTheme = { scope.launch { app.themeStore.setDark(!theme.dark) } },
-            onScan = {
-                if (loggedIn?.uname == null) showLoginDialog = true
-                else Toast.makeText(app, "扫码功能开发中", Toast.LENGTH_SHORT).show()
-            },
+            onOpenTheme = { showThemeSheet = true },
         )
         AccountHeader(loginState, onLogin = { showLoginDialog = true })
         // 只有设置卡滚动(用户反馈:账户头不该跟着动);weight(1f) 吃掉剩余高度,
@@ -180,8 +177,6 @@ fun LibraryScreen(
                 .verticalScroll(rememberScrollState()),
         ) {
             SettingsCard(
-                themeLabel = theme.customHue?.let { "自定义" } ?: theme.seed.label,
-                onOpenTheme = { showThemeSheet = true },
                 quality = settings.quality,
                 onQualityChange = { app.settingsStore.setQuality(it) },
                 historyLimit = settings.historyLimit,
@@ -414,8 +409,6 @@ private fun formatCacheSize(bytes: Long): String = when {
  */
 @Composable
 private fun SettingsCard(
-    themeLabel: String,
-    onOpenTheme: () -> Unit,
     quality: SettingsStore.Quality,
     onQualityChange: (SettingsStore.Quality) -> Unit,
     historyLimit: Int,
@@ -521,20 +514,6 @@ private fun SettingsCard(
                     },
                 )
             }
-        }
-        // 主题组
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-        ) {
-            SettingsItem(
-                icon = Icons.Rounded.Palette,
-                title = "主题色",
-                value = themeLabel,
-                onClick = onOpenTheme,
-            )
         }
         // 存储组:已下载(离线曲库入口)+ 清理缓存(行尾显示当前图片缓存大小)
         Column(
@@ -756,7 +735,8 @@ private fun ThemeSwatch(
 private fun FunctionBar(
     isDark: Boolean,
     onToggleTheme: () -> Unit,
-    onScan: () -> Unit,
+    /** 扫一扫已移除(无实际功能),右端图标换成主题色入口(用户要求,省出设置卡一行)。 */
+    onOpenTheme: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -773,10 +753,10 @@ private fun FunctionBar(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        IconButton(onClick = onScan) {
+        IconButton(onClick = onOpenTheme) {
             Icon(
-                Icons.Rounded.QrCodeScanner,
-                contentDescription = "扫一扫",
+                Icons.Rounded.Palette,
+                contentDescription = "主题色",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
