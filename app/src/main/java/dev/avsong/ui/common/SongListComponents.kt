@@ -338,9 +338,13 @@ fun CoverArt(url: String?) {
  * 播放中的音波条:4 根错相位往复的竖条(纯色,非渐变)。
  * Canvas 直接读动画值,只重绘不重组;只在「当前曲 && 正在播放」时由调用方组合,
  * 暂停或非当前曲不出现。
+ *
+ * 统一白色(用户要求,不再跟主题色 primary —— 浅色焦糖棕落在亮封面上看不清)。
+ * 每根条带一圈深色描底:亮封面上白条靠它拉开对比,暗封面上描底融入背景不可见;
+ * 这样无需加深整封面遮罩(浅色 12% 是用户调定的,再深会被嫌糊)。
  */
 @Composable
-fun PlayingEqualizer(modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary) {
+fun PlayingEqualizer(modifier: Modifier = Modifier, color: Color = Color.White) {
     val transition = rememberInfiniteTransition(label = "equalizer")
     val bars = List(4) { i ->
         transition.animateFloat(
@@ -357,11 +361,21 @@ fun PlayingEqualizer(modifier: Modifier = Modifier, color: Color = MaterialTheme
         val n = bars.size
         val gap = 2.dp.toPx()
         val barW = (size.width - gap * (n - 1)) / n
+        val outline = Color.Black.copy(alpha = 0.35f)
+        val pad = 1.2.dp.toPx()
         bars.forEachIndexed { i, anim ->
             val h = size.height * anim.value
+            val x = i * (barW + gap)
+            val y = size.height - h
+            drawRoundRect(
+                color = outline,
+                topLeft = Offset(x - pad, y - pad),
+                size = Size(width = barW + pad * 2, height = h + pad * 2),
+                cornerRadius = CornerRadius((barW + pad * 2) / 2f),
+            )
             drawRoundRect(
                 color = color,
-                topLeft = Offset(x = i * (barW + gap), y = size.height - h),
+                topLeft = Offset(x, y),
                 size = Size(width = barW, height = h),
                 cornerRadius = CornerRadius(barW / 2f),
             )

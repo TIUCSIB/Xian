@@ -57,6 +57,7 @@ import dev.avsong.domain.Song
 import dev.avsong.ui.MainUiState
 import dev.avsong.ui.common.FlatRefreshIndicator
 import dev.avsong.ui.common.LoadingHint
+import dev.avsong.ui.common.PlayingEqualizer
 import dev.avsong.ui.common.SongList
 import dev.avsong.ui.common.StateHint
 
@@ -327,15 +328,26 @@ private fun FeaturedSongCard(
                     )
                 ),
         )
-        Icon(
-            if (playingThis) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-            contentDescription = if (playingThis) "暂停" else "播放${song.title}",
-            tint = Color.White,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(14.dp)
-                .size(32.dp),
-        )
+        // 播放状态图标(用户要求):在播=音波条(与列表行/歌单卡同款,不再用 Pause);
+        // 暂停/非当前曲=播放三角。整卡点击语义不变(当前曲点击=暂停/续播)
+        if (playingThis) {
+            PlayingEqualizer(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp)
+                    .size(width = 24.dp, height = 18.dp),
+            )
+        } else {
+            Icon(
+                Icons.Rounded.PlayArrow,
+                contentDescription = "播放${song.title}",
+                tint = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(14.dp)
+                    .size(32.dp),
+            )
+        }
         if (menuExpanded) {
             DropdownMenu(
                 expanded = menuExpanded,
