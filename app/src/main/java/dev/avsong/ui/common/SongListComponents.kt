@@ -119,6 +119,8 @@ fun SongList(
     listState: LazyListState = rememberLazyListState(),
     /** 列表顶部留白;定位滚动到第 0 行时它能保证该行不贴住上方的精选卡片区。 */
     contentTopPadding: Dp = 0.dp,
+    /** 底部避让:默认 120dp(迷你条+tab 栏熔接容器);只有迷你条的二级页传更小值。 */
+    contentBottomPadding: Dp = 120.dp,
 ) {
     // 接近底部时触发加载下一页
     LaunchedEffect(listState, hasMore, loadingMore) {
@@ -131,7 +133,7 @@ fun SongList(
 
     LazyColumn(
         state = listState,
-        contentPadding = PaddingValues(top = contentTopPadding, bottom = 120.dp),
+        contentPadding = PaddingValues(top = contentTopPadding, bottom = contentBottomPadding),
     ) {
         itemsIndexed(songs, key = { _, s -> s.mediaId }) { index, song ->
             SongRow(

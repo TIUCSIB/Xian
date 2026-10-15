@@ -71,6 +71,8 @@ fun PlayHistoryScreen(
                     showPlayButton = false,
                     currentMediaId = currentMediaId,
                     isPlaying = isPlaying,
+                    // 二级页底部只有悬浮迷你条胶囊(列表可从其两侧穿过),避让只保文字不被压
+                    contentBottomPadding = 40.dp,
                 )
             }
         }
