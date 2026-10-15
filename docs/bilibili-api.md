@@ -197,7 +197,7 @@ POST /x/v3/fav/resource/deal       rid=<aid>&type=2&add_media_ids=<ids>&del_medi
 - **BV/av 直达**:输入框内容正则匹配 `BV[0-9A-Za-z]{10}` 或 `av\d+` → 直接调 `/x/web-interface/view?bvid=|aid=` 解析成单首(不走 search)。av→bvid 也经 view 的 `data.bvid`。分享链接文本同样命中(BV 正则会从长文本里提取)。
 - **分页**:`/x/web-interface/search/type` 的 `page` 参数已支持;`data.numPages` 判 hasMore。UI 滚到底部触发 `loadMoreSearch` 追加去重。
 - **本地搜索历史**:纯本地 DataStore(单分隔串保序,去重、最新在前、上限 20),不碰官方云端"最近搜索"。
-- ⚠ **搜索建议端点 `s.search.bilibili.com/main/suggest` 实测返回 code:3 空**(需特定上下文/签名,不稳定),暂不做下拉建议。
+- **搜索联想**:`GET s.search.bilibili.com/main/suggest?main_ver=v1&term=<kw>`(匿名可用;2026-10-09 曾实测 code:3 空,2026-10-15 复测正常并已实现——该端点偶发抽风,失败返回空列表即可,联想是锦上添花不打断主搜索)。词在 `data.result.tag[].value`。实现:`BiliSongRepository.suggest()`(runCatching 兜底空列表)+ MainViewModel 250ms 防抖(mapLatest 丢旧)。
 - 实现:`data/BiliSongRepository.resolveDirect()`、`data/SearchHistoryStore.kt`、`ui/search/SearchScreen`(HistoryChips + 分页 SongList)。
 
 ## 13. 发现区四源(首页 chips,2026-10-09 加)

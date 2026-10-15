@@ -2,6 +2,8 @@
 
 基于 B 站公开 API 的安卓音乐播放器:Kotlin + Jetpack Compose + Material 3 + Media3(ExoPlayer)。纯客户端、匿名使用、无后端。
 
+**本文档只记现行规则与硬坑**,历史决策过程在 git log,API 配方在 docs/bilibili-api.md。会话收尾追加规范:只写与下次改代码有关的约束,写现在时不写演变史;超过三行的新知识进 docs/。
+
 ## 快速命令
 
 ```bash
@@ -24,52 +26,58 @@
 - UI 自动化:`adb shell input tap/swipe/text`;状态验证:`adb shell dumpsys media_session | grep -m1 state=PlaybackState`(state=3 即 PLAYING)。
 - 中文输入用 `adb shell input text` 传 URL 编码会失败,**改用英文关键词测试搜索**(如 `linkin`)。
 
+### 测试机坑(实测踩过)
+
+- **MuMu 上 `svc wifi disable` 会连带断掉 adb 通道**(设备 offline)。恢复:`"D:\MuMuPlayer\nx_main\MuMuManager.exe" sh -v 0 -c "svc wifi enable"`(宿主直连,不依赖 adb)。
+- **封面旋转/弹幕动画让 uiautomator 拿不到 idle**,且静默留下旧 ui.xml(读起来像「部署回退了」)。先 `rm /sdcard/ui.xml` 再 dump 并确认成功输出,或先发 KEYCODE_MEDIA_PAUSE(127)停掉动画。
+- MuMu 是 **360dp 窄屏(wm density 640 = 1dp=4px)**,adb 手势坐标按 4x 换算;`screencap` 滞后输入一帧,像素级验证用连拍。
+- 并发会话(BiliTune)同机抢前台时,`dumpsys media_session` 要**按包名过滤**段落,否则抓到别人的会话。
+- 长视频(如 65h 课程)的「下载」不要拿来当测试项,流式下不完。
+
 ## 架构速览
 
 ```
 app/src/main/java/dev/avsong/
-├── AvSongApp.kt            # Application:PlayerController 实例 + BiliSongRepository 单例
+├── AvSongApp.kt            # Application:PlayerController 实例 + 各仓库单例
 ├── MainActivity.kt         # 单 Activity,请求通知权限,edge-to-edge
 ├── domain/                 # Song 模型、SongRepository 接口、分页
 ├── data/
 │   ├── BiliConstants.kt    # UA / Referer / host 常量
 │   ├── BiliHttp.kt         # OkHttp 单例:自动注入 UA/Referer/buvid+登录 Cookie
-│   ├── BiliSongRepository.kt  # ★ 核心数据源(object 单例):搜索/榜单/取流/直达
-│   ├── FavoriteRepository.kt  # 收藏夹=歌单(读/写,写带 csrf=bili_jct)
-│   ├── SearchHistoryStore.kt  # 本地搜索历史(DataStore,去重/上限20)
-│   ├── DownloadedStore.kt  # ★ 已下载歌曲元数据(DataStore JSON 列表,自愈剪枝+孤儿扫描;文件在 getExternalFilesDir(MUSIC))
+│   ├── BiliSongRepository.kt  # ★ 核心数据源(object 单例):搜索/榜单/联想/取流/直达
+│   ├── CollectionRepository.kt # UP 合集解析/翻页/追合集合并
+│   ├── FavoriteRepository.kt  # 收藏夹=歌单(读/写,写带 csrf=bili_jct;aid/check 双缓存)
+│   ├── ReplyRepository.kt  # 热评(播放页弹幕数据源)
+│   ├── LocalPlaylistStore.kt # 本地自建歌单(DataStore JSON,纯本地不走 B 站)
+│   ├── PlayHistoryStore.kt # 本地播放历史(DataStore)
+│   ├── SearchHistoryStore.kt # 本地搜索历史(DataStore,去重/上限20)
+│   ├── DownloadedStore.kt  # ★ 已下载元数据(DataStore JSON,自愈剪枝+孤儿扫描)
+│   ├── DownloadManager.kt  # 下载落盘(bvid 前缀文件名,流式写)
 │   ├── FakeSongRepository.kt  # 直链测试音频(回退验证 UI 链路)
-│   ├── auth/
-│   │   ├── AuthStore.kt    # DataStore 持久化 SESSDATA/bili_jct/ac_time_value 等 + 内存 StateFlow
-│   │   ├── QrLogin.kt      # 扫码登录 ⚠ 端点在 passport.bilibili.com 域;ac_time_value 从轮询 data.url 取
-│   │   └── CookieRefresh.kt # ★ 登录态续期(§15):cookie/info → RSA(服务端ts) → correspond → refresh → confirm
-│   ├── lyric/
-│   │   └── LyricRepository.kt # ★ 歌词多源:B站AI字幕→bgm增强→网易云多候选+时长校验
-│   └── remote/
-│       ├── BiliDtos.kt     # kotlinx.serialization DTO(playurl 含 flac/dolby)
-│       ├── PlayerV2Dtos.kt # /x/player/v2 字幕+bgm_info DTO
-│       ├── FavDtos.kt      # 收藏夹 DTO
-│       └── WbiSign.kt      # wbi 签名(备用,当前匿名链路不需要)
+│   ├── auth/               # AuthStore / QrLogin / CookieRefresh(§15)
+│   ├── lyric/LyricRepository.kt # ★ 歌词多源:B站AI字幕→bgm→网易云+时长校验
+│   └── remote/             # DTO(BiliDtos 含 flac/dolby)+ WbiSign(备用)
 ├── player/
-│   ├── MusicService.kt     # MediaSessionService + 播放现场持久化(重启恢复续播)
-│   ├── PlayerController.kt # UI↔服务桥:异步绑定 MediaController + PlayerState 流
-│   ├── PlaybackPersistenceStore.kt # 队列/进度/模式 DataStore 快照(⚠ PersistedItem 带 uri:离线曲重启不回退 bili://)
-│   ├── BiliDataSources.kt  # ★ bili:// → ResolvingDataSource:现取直链+CDN备用换源
+│   ├── MusicService.kt     # MediaSessionService + 现场持久化 + 交叉淡入淡出
+│   ├── PlayerController.kt # UI↔服务桥:withController {} + PlayerState 流 + 队列操作
+│   ├── PlaybackPersistenceStore.kt # 队列/进度/模式快照(⚠ PersistedItem 带 uri)
+│   ├── BiliDataSources.kt  # ★ bili:// → ResolvingDataSource:现取直链+CDN换源+file://分发
 │   └── BiliHttpDataSourceFactory.kt  # 带 Referer 的 DefaultHttpDataSource
 └── ui/
-    ├── AvSongApp.kt        # Scaffold + NavHost(四顶级 tab)+ MiniPlayerBar 叠 AppBottomBar + Snackbar + 收藏弹窗
-    ├── AppBottomBar.kt     # 底部导航:首页/搜索/歌单/我的(TopTab 枚举,悬浮圆角胶囊,选中项黄色圆形块,点击无涟漪)
-    ├── MainViewModel.kt    # 搜索/榜单/歌词/历史状态 + 播放控制 + aid 缓存
+    ├── AvSongApp.kt        # Scaffold + NavHost + 迷你条/底栏熔接 + 播放面板 + 各弹窗接线
+    ├── AppBottomBar.kt     # 底部导航:首页/搜索/歌单/我的(悬浮圆角胶囊,无涟漪)
+    ├── MainViewModel.kt    # 全局 UI 状态 + 播放控制 + 下载/队列提示流
     ├── ViewModelFactory.kt # remember*ViewModel 系列(Application 依赖注入)
-    ├── MiniPlayerBar.kt    # 迷你播放条(与 AppBottomBar 熔接:上圆角/下圆角、中缝贴合;播放中封面匀速旋转 6s/圈)
-    ├── common/             # ★ 共享歌曲列表组件(SectionHeader/SongList/SongRow/CoverArt/LoadingHint/StateHint)
-    ├── home/               # 首页 tab(黄色大标题块 + 热歌榜 + 下拉刷新)
-    ├── search/             # 搜索 tab(胶囊搜索框 + 历史 chips + BV直达 + 分页)
-    ├── login/              # 登录页(二维码 + 轮询状态机 + 退出)
-    ├── library/            # 歌单 tab(UP合集 + 收藏夹 = 歌单中心)+ 我的 tab(账户卡)/ 收藏夹内容页 / 合集内容页 / 播放页收藏弹窗
-    ├── downloads/          # ★ 已下载页(离线曲库:浏览/播放/删除;数据源 DownloadedStore + 孤儿扫描)
-    ├── queue/              # QueueContent 队列列表(迷你条/播放页的队列抽屉共用:跳转/移除;无独立队列页)
-    └── player/             # 全屏播放页(全幅封面背景;星=收藏,加号=当前歌追加队尾,点击封面↔歌词)
+    ├── MiniPlayerBar.kt    # 迷你条(与底栏熔接;播放键环形进度;封面旋转)
+    ├── common/             # ★ 共享组件:SongList/SongRow/CoverArt/SkeletonList/ThemedNotice/RefreshIndicator
+    ├── theme/              # Theme.kt(双主题 seed 派生)/ ThemeStore / Type.kt(Noto Sans SC)
+    ├── home/  search/  login/
+    ├── library/            # 歌单中心 + 收藏夹/合集/本地歌单详情(共用 PlaylistDetailContent)+ 收藏弹窗
+    ├── history/PlayHistoryScreen.kt # 播放历史独立页
+    ├── downloads/          # 已下载离线曲库
+    ├── settings/           # PlaybackSettingsScreen / SettingsStore / AboutScreen
+    ├── queue/QueueScreen.kt # QueueContent(仅队列抽屉用,无独立队列页)
+    └── player/             # 播放页面板 + LyricView + ReplyDanmaku(热评弹幕)
 ```
 
 数据流:`UI → MainViewModel → PlayerController → MediaController ↔ MusicService(ExoPlayer)`;
@@ -90,10 +98,9 @@ app/src/main/java/dev/avsong/
 11. **ExoPlayer 只能在主线程操作**:`MusicService.restore()` 若在 IO 协程里直接 `setMediaItems` 会崩(`Player is accessed on the wrong thread`)。读盘走 IO,操作播放器用 `withContext(Dispatchers.Main)`。
 12. **收藏操作要 aid 不是 bvid**:搜索结果/榜单/收藏夹内容尽量带 `Song.aid`,缺失时经 `FavoriteRepository.fetchAid()`(view 接口)补;写接口必须带 `csrf=bili_jct`。
 13. **队列重排用 `moveMediaItem`,别手动 seekTo**:Media3 的 `moveMediaItem` 会自动保持"当前播放项"不变;若再手动 `seekTo(新索引)` 反而会跳歌(实测踩过)。见 `PlayerController.moveItem`。
-14. **收藏夹清空后 `resource/list` 回 `medias:null`**(不是 `[]`):DTO 声明可空(`List<FavMedia>?`)+ `.orEmpty()`,否则 kotlinx explicitNulls 抛 "Expected start of the array" → 详情页整页报错(用户实测:1 首的收藏夹取消收藏后复现;和陷阱 10 的 dolby null 同根因)。
-15. **离线曲播放三处联动坑(已下载功能)**:① `BiliDataSources` 的 resolver 下游裸挂 `DefaultHttpDataSource` 会让 `file://` 打不开(它只认 http),必须包一层 `DefaultDataSource.Factory(context, http)` 按 scheme 分发;② Media3 1.x 的 `MediaItem.uri` 已挪进 `localConfiguration.uri`(裸 `m.uri` 编译不过);③ 现场快照 `PersistedItem` 必须存 `uri`,否则 `restore()` 硬编码 `bili://<bvid>` 会把离线曲重启还原成在线取链(断网即失败)。下载曲的 `Song` 保持 `bvid/mediaId=真实bvid`、只把 `audioUrl` 填 `file://…`,收藏/歌词/历史/队列去重才全部照常。
-
-16. **Cookie 续期三个实测坑**(前两个都表现为 correspond 404,极易误判):① `correspondPath` 必须用 `cookie/info` 返回的 **timestamp** 做 RSA 加密,**本地时间戳一律 404**(本地时钟与服务器有偏差,该字段就是为此提供);② **Android/JDK 的 `OAEPWithSHA-256AndMGF1Padding` 默认 MGF1 用 SHA-1**,而 B 站按 MGF1-SHA256 解密 —— 不显式传 `OAEPParameterSpec("SHA-256","MGF1",MGF1ParameterSpec.SHA256,…)` 会算出错误密文 → 404(实测同一 ts:显式 SHA256→200,默认→404);③ correspond 页面响应是 **gzip**,不手动解压抠不到 `refresh_csrf`(OkHttp 自动解压,Python urllib 要 gzip.decompress)。另:`ac_time_value` **不在扫码的 Set-Cookie 里**,而在轮询响应的 **`data.refresh_token` 平级字段**(⚠ 不在 `data.url` 里 —— 三件套才在 url 查询参数,照 BiliTune 只解析 url 会拿到 null;权威依据 bilibili-api `login_v2.py:352`);没有它无法续期(旧会话需重新扫码一次)。服务端校验:空 token → -400,假 token → 86032 refreshToken已过期。配方见 docs/bilibili-api.md §15。
+14. **收藏夹清空后 `resource/list` 回 `medias:null`**(不是 `[]`):DTO 声明可空 + `.orEmpty()`,否则 kotlinx explicitNulls 抛异常(和陷阱 10 的 dolby null 同根因)。
+15. **离线曲播放三处联动坑**:① `BiliDataSources` 的 resolver 下游必须包 `DefaultDataSource.Factory(context, http)` 按 scheme 分发(裸 `DefaultHttpDataSource` 只认 http);② Media3 1.x 取 uri 用 `MediaItem.localConfiguration?.uri`(裸 `m.uri` 编译不过);③ 现场快照 `PersistedItem` 必须存 `uri`,否则重启后离线曲被还原成 bili:// 断网即挂。下载曲的 `Song` 保持 `bvid/mediaId=真实bvid`、只把 `audioUrl` 填 `file://…`。
+16. **Cookie 续期三个实测坑**(前两个都表现为 correspond 404,极易误判):① `correspondPath` 必须用 `cookie/info` 返回的 **timestamp** 做 RSA,**本地时间戳一律 404**;② JDK 的 `OAEPWithSHA-256AndMGF1Padding` 默认 MGF1 是 SHA-1,必须显式 `MGF1ParameterSpec.SHA256`,否则密文错 → 404;③ correspond 响应是 gzip。另:`ac_time_value` 在轮询响应的 **`data.refresh_token` 平级字段**(不在 `data.url` 里,照 BiliTune 只解析 url 会拿到 null)。配方见 docs/bilibili-api.md §15。
 
 ## 代码约定
 
@@ -101,6 +108,7 @@ app/src/main/java/dev/avsong/
 - 序列化统一 kotlinx.serialization + `ignoreUnknownKeys`(B 站响应字段多且常变)。
 - UI 状态:`StateFlow<MainUiState>` 单状态树;播放器状态经 `PlayerController.playerState()` 流合并。
 - 注释解释"为什么"(尤其是实测踩坑结论),不复述代码。
+- **改共享调用点(如 AvSongApp 的 composable 接线)先 grep 现有参数**:签名常带默认空实现,编译不报错但表现为「点了没反应」;并行会话可能同时改同一文件,构建失败先看错误文件是不是自己改的,改完 grep 关键 UI 文本确认区块没被覆盖丢失。
 
 ## 文档索引
 
@@ -109,40 +117,80 @@ app/src/main/java/dev/avsong/
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 模块设计、播放链路时序、版本决策
 - [docs/ROADMAP.md](docs/ROADMAP.md) — 待办与已知缺口
 
-## 当前状态(2026-10-07)
+## 功能与设计要点(现行规则)
 
-核心链路全部在 MuMu(API 32)+ AVD(API 36)实测通过:热歌榜加载、搜索(视频源)、点歌播放、迷你条、全屏播放页、后台通知、媒体键控制、bili:// 按需取链自愈。
+已实测通过:搜索/榜单/点播/迷你条/播放面板/后台通知/媒体键/bili:// 自愈/扫码登录/歌词多源/收藏夹/合集/本地歌单/下载离线播放/队列抽屉。新功能验收记录写 git log,不追加本文档。
 
-扫码登录已用真实账号完整验证(扫码→Cookie 提取→用户名显示→重启保持)。播放错误现在有全局 Snackbar + 重试按钮。实测确认:普通登录用户音质仍 192K 封顶,只有大会员更高(登录页文案已修正)。歌词多源(B站AI字幕→bgm增强→网易云多候选+时长校验)MuMu 实测两条路径均通过,并支持双语(tlyric 翻译行合并)。播放队列页(查看/跳转/移除/上下移重排)通过。收藏夹=歌单(读列表/内容分页/收藏弹窗回显/加入/移出,CSRF 写接口)通过。搜索增强(BV/av 直达、分页上拉、本地历史 chips)通过。播放健壮性(现场恢复:force-stop 重启自动续播、CDN 备用换源、FLAC/杜比选路)通过。Coil 封面磁盘缓存(重启零网络请求)通过。以上功能均借鉴 BiliTune(见 docs 与 git 历史)。待办见 docs/ROADMAP.md。
+### 全局视觉约束(用户明确要求,新增视觉元素前先看)
 
-优化批次(2026-10-14,用户采纳全项):① 合集/收藏夹「随机播放」改**播全量**——`loadAll(onDone)` 完成回调全量列表再 `playQueueShuffled`(原来只洗已加载 20 首,与「播放」的渐进补全不一致);② NavHost 全局页面过渡 200ms 淡入+12dp 上移;③ 全局列表 contentPadding bottom 提到 **120dp** 避让迷你条熔接容器(此前最后一排卡片播放钮被裁半截);④ 歌单详情**沉浸式头部**:封面 blur(24dp)+背景色 72% 压暗垫底(有封面才垫);⑤ 倍速播放(2026-10-14 二次调整:**从播放页挪到「我的」页设置卡**——用户反馈播放页的文本键没效果(根因:AvSongApp 调 PlayerScreen 没传 onSpeedChange,走了默认空实现,点击只改了本地 index),且它应是全局偏好而非每首歌的临时态;`SettingsStore` 加 `playbackSpeed` 持久化(floatPreferencesKey),设置卡「倍速播放」行(档位=SettingsStore.SPEED_STEPS:常速/1.25x/1.50x/2.00x/0.75x),变更即落盘+`viewModel.setPlaybackSpeed` 转发 PlayerController;app 启动 collect settings 持续应用(⚠ **collect 必须在 Main**:appScope 是 Dispatchers.Default,MediaController 跨线程调 setPlaybackSpeed 直接 IllegalStateException 崩溃——用户实测切倍速即闪退;`launch(Dispatchers.Main)` 修复);播放页速度键已删除。搜索联想(2026-10-15 二次修):**样式 = `androidx.compose.ui.window.Popup` 浮层**(无卡片底/无描边,仅页面同色背景防叠影——用户要求列表本身不带背景;挂在搜索框正下方 IntOffset(16dp,84dp)——独立窗口天然悬浮于一切内容之上,不占布局、不推走历史/结果,点面板外自动关;⚠ 不要用普通 Column+zIndex:浮层和 when 内容不是同一父容器的直接子级时 zIndex 无效,平铺进 Column 又会推走历史——两版都被否)**任何状态**(Idle/Loading/Result)联想非空即显示——此前只在 Idle 渲染,而 onQueryChange 一有输入就切走 Idle,联想"时有时无";阈值 ≥1 字(中文单字也要联想)。播放设置已收敛为子页 PlaybackSettingsScreen(用户重构):音质/历史上限/倍速/睡眠/热评全部收纳)⑥ 搜索联想:`s.search.bilibili.com/main/suggest`(匿名),VM 250ms 防抖 flow(`mapLatest` 丢弃旧请求),Idle 态渲染在历史上方、点词直接搜;`SongRepository.suggest` 接口默认空实现。⚠ 踩坑:`FavoriteRepository` 因并行开发出现两个 companion object(一类的 companion 只能有一个,第二个沦为普通嵌套对象,`api`/`TYPE_SEASON` 全部 unresolved)——合并即可;新建 DTO 文件曾被截断只存进一半,报 "Unresolved reference" 像缓存问题,实为文件内容缺失。
+- **纯色扁平:禁渐变、禁阴影(elevation/dropShadow)、禁边框**。显式例外仅三处:首页精选卡底部黑纱渐变、歌单卡封面底部黑纱渐变(保证白色图标可读)、会员徽章描边。
+- 图标一律裸图标无圆底(CircleButton 已删);色板/历史 chip/× 等小控件 `clickable(indication = null)`——裸 Icon+clickable 的默认涟漪是方形底,难看。
+- 黄色品牌色仅深色模式;浅色 primary 用压深变体(柠檬黄浅色 `#7E7000`)。深浅两态都由 seed 色相派生(`ThemeStore.ThemeState(dark, seed, customHue)`),换配色只动 `ui/theme/Theme.kt`。
+- 字体 Noto Sans SC 变量字体(`res/font/`,17.7MB):**必须单文件同时覆盖 CJK+拉丁**——Latin-only 字体缺 CJK 字形,系统回退字体不认 wght 轴,`FontWeight.Bold` 对中文完全失效(踩过)。换字体=替换 TTF + `Type.kt` 一处。
+- 反馈提示统一 `ThemedNoticeHost`(`ui/common/ThemedNotice.kt`,透明 Dialog 窗口,FLAG_NOT_FOCUSABLE|NOT_TOUCHABLE,不压暗不挡触摸),系统 Toast 已清零。当初不用 Snackbar/Toast 就是因为队列抽屉是独立窗口会盖住它们——别换回去。
+- 状态栏图标明暗由 MainActivity `isAppearanceLightStatusBars` 跟随主题(enableEdgeToEdge 默认判定只看系统,不够用)。
 
-UI 视觉(2026-10-07 三次改版,参考黑黄设计稿,AVD+MuMu 截图验收):**日夜间双主题**(2026-10-11 起不再锁死深色;2026-10-12 起拆为**深浅开关 + 颜色 seed,夜间/浅色两态都由 seed 色相派生**(夜间不再是写死黑黄:`darkSeedScheme(hue)` 整套由色相生成,曲线按原黑黄校准——hue=57 时 primary≈#F5EE51≈品牌柠檬黄;轮盘自定义色相夜间同样生效):`ThemeStore.ThemeState(dark, seed, customHue)`——深浅由功能栏图标切换;浅色 seed 由「我的」页**设置卡**(账户头下方 `SettingsCard`,2026-10-12 扩为三组卡片:**播放组**(「睡眠定时」=倒计时到点暂停播放(2026-10-14 加,行内展开 15/30/60/90 分钟,已启用时首项「关闭定时」+行尾回显剩余分钟;状态只在 MainViewModel 内存不持久化——睡醒残留倒计时比丢失设置更糟;到点只 pause 不 toggle,否则恰好暂停时会被反手起播;用户指定放设置卡不放播放页:它是全局功能不是歌曲属性);「默认音质」=SettingsStore.Quality 四档 流畅64K/清晰132K/高清192K/无损FLAC;「播放历史上限」20/50/100/不限,PlayHistoryStore.record 写入时按 SettingsStore.historyLimit 裁剪;2026-10-13 用户反馈「每个功能都是抽屉样式有点怪」——**音质/上限不再弹 ModalBottomSheet,改行内展开**:`SettingsExpandableItem` 点整行就地展开、箭头转 180°、选中即收起并在行尾回显新值,选项缩进 52dp 对齐标题、选中 primary 加粗 + 勾,同一时间只展开一项;主题色仍走弹层——色板+色相轮盘是视觉选择器,且弹层不自动关便于逐色预览;选路在 `BiliSongRepository.pickStream` 按「目标档位取可用不高于目标的最高档」降级匹配——无损需大会员,普通账号自动落回 192K)+ **主题组**(「主题色」行)+ **存储组**(2026-10-13 起两行:「已下载」=离线曲库入口,行尾显 N 首,点进 DownloadedScreen;「清理缓存」=删 Coil 图片缓存 `cacheDir/image_cache`,行尾常驻显示当前大小(进页 IO 线程测、清理后自刷新),完成 Toast 报 MB 数;2026-10-13 MuMu 补测:音质四档弹窗与选中回显、清理缓存 Toast(报「已清理 2.3 MB」且目录清空)、pickStream 四档选路端到端 picked=30216/30232/30280(普通账号 LOSSLESS 无 flac/dolby 正确落回 30280)))点开 **ModalBottomSheet 弹窗**改:八个预设色板(`ThemeSeed`=柠檬黄/奶油焦糖/玫瑰/绯红/靛蓝/天蓝/墨绿/紫罗兰,柠檬黄浅色 primary 压深 `#7E7000` 保白底对比;弹窗内 `chunked(4)` 两行排布——一行塞不下 8×46dp)+ **色相轮盘**(`HueWheel` Canvas+SweepGradient,拖动点选任意色相 → `customColorScheme(hue)` 固定饱和明度曲线生成整套浅色);轮盘拖动走 `previewHue` 只改内存、松手 `persistHue` 落盘(每帧写盘太重);点预设回 `setSeed` 并清 customHue;弹窗不自动关、便于在真实页面逐主题预览,下滑/点遮罩/返回关;⚠ 色板 `clickable` 必须 `indication=null`(方形涟漪在色板上很难看,用户点名去掉),`ThemeStore` DataStore 持久化(旧布尔/单值 key 自动迁移)、启动恢复;仍不随系统/不用动态取色,默认夜间),深色=近黑底 `#070707` + 柠檬黄 `#F7F051` + 深灰卡片(surfaceVariant/surfaceContainerHigh),浅色=**暖白奶油 + 焦糖棕**(2026-10-12 用户从四个候选方向中选定,此前黑白灰色卡被否「颜色不够好」:米白底 `#FAF7F2` + 焦糖棕 primary `#8A5A3E` + 暖灰副文字 `#7A7468`;柠檬黄浅色下对比度差,**黄色仅深色模式使用**);全 app 颜色走 colorScheme token(UI 层无写死黄色),换方案只动 `Theme.kt` 一处。字体:**Noto Sans SC 变量字体**(2026-10-12 从 Inter 换过来;`res/font/noto_sans_sc_variable.ttf` 17.7MB 单文件 wght 轴 100–900,覆盖 拉丁(含重音)/希腊/西里尔/平假名/片假名/汉字(简繁+生僻)/全角标点;`Type.kt` 按 FontWeight 取 variation 实例,ExperimentalTextApi 已 opt-in;minSdk 26 才支持;OFL 许可,许可文件在 `docs/licenses/OFL-NotoSansSC.txt`)。⚠ 换字体原因(踩过):**Inter 无中日文字形,中文/日文标题走系统回退字体,而回退不认变量字体的 wght 设置——`FontWeight.Bold` 对中文完全无效**,「正在播放」行的加粗高亮原先只对英文生效(用户实测);换成单文件全字重字体后 CJK 字重才真实生效。代价:拉丁字形随之为 Noto 的拉丁(Compose 字体族不支持按字符回退,覆盖 CJK 的字体必须同时带拉丁),APK 26.5→37.3MB。想换别的字体(MiSans/HarmonyOS Sans 等免费商用字体)只需替换该 TTF + `Type.kt` 一处。状态栏图标明暗经 `MainActivity` 的 `isAppearanceLightStatusBars` 跟随主题(enableEdgeToEdge 默认判定只看系统,不够用)。B 站粉蓝品牌色已弃用。用户明确要求**纯色扁平:禁止渐变、阴影(dropShadow)、边框**,新增视觉元素前先看这条。导航:顶部大色块导航已移除,改**底部四 tab**(`AppBottomBar`:首页/搜索/歌单/我的,选中项图标/文字变黄加粗——黄色圆形垫底已按用户要求移除);迷你条与 tab 栏**熔接为一个圆角容器**(2026-10-11:迷你条只出 24dp 上圆角、tab 只出下圆角、中缝零间距,经二者的 `shape`/`outerPadding` 参数在 AvSongApp 按同屏与否动态传形;非 tab 页只有迷你条,保持全圆角胶囊;播放页两者都隐藏。同日按用户反馈整体收一档:迷你条封面 40dp/内边距 5dp,tab 去掉垫底后图标 22dp、行内边距收紧;播放/暂停与队列两钮也已去圆底改裸图标)。迷你条的队列钮不再跳队列页,改为**底部 4/5 屏抽屉**(ModalBottomSheet + `fillMaxHeight(0.8f)`,内嵌共用 `QueueContent`:点非当前曲直接切播、点当前曲无操作(经 `index != currentIndex` 判断)、抽屉始终不自动关闭,由用户手动下滑/点遮罩关闭;抽屉传 `showReorder=false` 隐藏上下移(播放队列现在只有抽屉一个入口,重排按钮暂无处显示但参数保留)、`isPlaying` 让当前曲行首显示 `PlayingEqualizer` 音波条(暂停中回退为播放三角);徽标会向上溢出文字右上角,**DrawerTab 的 Row 不能加 clip**(会裁掉徽标上半截);⚠ 开随机(shuffle)时必须把 repeatMode 从 REPEAT_MODE_ONE 拉回 ALL —— ExoPlayer 里 ONE 优先级高于 shuffle,否则变「当前曲无限循环」,`cyclePlayMode` 和播放页 `toggleShuffle` 都做了该防护;`QueueContent` 加 `listState` 参数,抽屉打开即 `scrollToItem(currentIndex)` 定位到当前曲;该版本 ModalBottomSheet 是 ExperimentalMaterial3Api 且无 shadowElevation 参数,用 tonalElevation=0;播放页底部控件也接入同一抽屉:左端=模式单键(图标随模式变,顺序播放时灰色),右端原循环键移除、改为队列抽屉入口,Routes.QUEUE 整页与 QueueScreen composable 已删除)。抽屉头部为双 tab「当前播放(数字徽标)/历史播放」:徽标=队列数,贴在文字右上角(`DrawerTab` 组件);历史播放=本地播放记录(`PlayHistoryStore` DataStore,起播即记、同曲去重置顶、上限在「我的」页设置可调 20/50/100/不限,默认 50),**不用 B 站 history 接口**——那是观看历史,app 内播放不会上报成 B 站播放;MainViewModel 在 playerState 采集里当前曲变化时记快照(PlayerState 的 mediaId/title/artist/artworkUri 足够回放),`playFromHistory` 回放策略=已在队列跳播、队列空单曲入列、否则追加队尾起播,复用 `SongList` 渲染(当前曲遮罩音波条/高亮自动生效)。当前播放 tab 的列表上方有**功能条**(仅此 tab):模式为**单键循环切换**(一个胶囊显示当前模式「列表循环/单曲循环/随机播放/顺序播放」,点击经 MainViewModel `cyclePlayMode` 按序轮转;顺序=REPEAT_OFF+关随机;PlayerController 保留 `setRepeatMode`/`setShuffle` 供其调用;抽屉 Tab 文字对齐用「Box 只包文字、徽标钉 TopEnd」结构)+ 下载(解析 `audioUrlBlocking` → BiliHttp(自带 Referer)流式存到 `getExternalFilesDir(MUSIC)/*.m4a`,反馈走 **Toast**——抽屉是独立窗口 Snackbar 会被盖住,VM 用 `downloadMessage` 流 + `consumeDownloadMessage` 防重)+ 收藏(复用 FavoritePickerDialog)+ 一键清空(`clearQueue`,同时停止播放、徽标随队列空消失,**点击先弹 AlertDialog 模态确认「清空播放队列?/将移除全部 N 首/取消|清空」防误触**——初版用 DropdownMenu 气泡,用户要求改模态)。首页=热歌榜单源:黄色 Discover 卡(英文 Discover 标题靠左上,删过又按用户要求加回;无刷新按钮,刷新只走下拉手势)+ 榜单前三首轮播卡(封面铺卡、可横滑、右缘露边、卡片下沿压出黄块到深色底;卡上不放歌名,右下播放键随播放状态切 PlayArrow/Pause 且**无圆底**(裸白图标);卡底部叠加**自下而上的黑色渐变遮罩**(0.45 高度处透明 → 底部 black 55%,用户明确要求加遮罩过渡保证播放键在浅色封面上可读——**这是「禁止渐变」规则的显式例外**,仅此一处);+ 第 4 首起的列表(行尾只留时长,无播放钮);五源切换已从 UI 摘除(VM 机制保留,见 2026-10-11 节);搜索=无边框填充 TextField+历史 chips+BV直达+分页;歌单=歌单中心(UP 合集 + 收藏夹,2026-10-11 起);我的=B 站式账户头(2026-10-11 起无卡片背景、黄色「我的音乐」横幅已删:顶部**功能栏**右端=日夜间切换 + 扫一扫两个裸图标(**未登录**点扫一扫/账户头均弹 **`LoginEntryDialog` 登录入口弹窗**(2026-10-12 参考设计稿:标题「Bilibili 账号」+关闭+说明+主色实心「扫码登录」全宽胶囊 + 描边「手动填入 Cookie」按钮(点开进入弹窗内 Cookie 输入视图:`CookieInputView` 固定 160dp 高输入框,`parseCookieInput` 解析→临时入库→校验登录态,无效回滚),不跳页 —— 扫码视图与轮询状态机、Cookie 输入全在弹窗内完成(旧整页扫码页 `Routes.LOGIN` 仍在,仅「歌单」页未登录错误区的「去登录」会跳它,见 ROADMAP 技术债),已登录 Toast「开发中」——真扫码相机功能未做)+ 左头像(真实头像 AsyncImage,回退黄圆首字)+ 右侧昵称 + Lv 等级徽章(实心黄高亮)+ 会员徽章(独立一行、描边样式:大会员黄描边、非会员灰描边「正式会员」——border 是用户点名的例外)+ 硬币行(**退出登录已从账户头右上角图标移入设置卡末行**——2026-10-13 用户要求「退出按钮转变成下面的功能项」:仅登录时渲染(`showLogout = loggedIn != null`)、`destructive=true` 走 error 色、点击弹 AlertDialog 确认;未登录时该行整块消失);数据经 nav 拉取——⚠ **`money` 才是硬币数,`coin` 是 B 币余额且常缺省**(见 docs §9)——`AuthStore` 持久化 face/level/coin,`LoginViewModel` 进「我的」tab 静默刷新一次资料(兜底旧会话迁移+硬币等活数据,只刷一次防 collect 循环);⚠ **会话失效必须清本地登录态**(2026-10-13 修):`QrLogin.fetchProfileResult()` 把 nav 结果三分——`Ok` 更新资料 / `Invalid`(code -101 或 code 0 但 isLogin=false)**清会话退回未登录 UI** / `Error`(网络失败、-412 风控、isLogin=true 但昵称为空)保留本地会话下次再试;修前是 `runCatching{ fetchProfile()?.let{saveProfile(...)} }`,会话被服务端作废时 nav 回空资料,**把 uname 覆盖成空串、face/vip 整个删掉**,界面停在「? 头像 + Lv0 + 硬币 0」的半坏状态(用户实测反馈「感觉像是登录的认证掉了一样」;实测 SESSDATA 有效期还有半年,是服务端提前作废而非超时);⚠ 网络失败绝不能判为未登录,否则会把还能用的登录误踢掉)。播放页(2026-10-14 起带**热评弹幕**:`ReplyRepository` 拉 `/x/v2/reply/main?type=1&oid=<aid>&mode=3`(要 aid,匿名可用,实测 code:0),播放页上半区 3 轨道循环飘过(Animatable+LinearEasing 像素级 offset,黑纱圆角底),顶栏 Subtitles 图标开关、SettingsStore.danmakuEnabled 持久化(默认开);不消费点击不挡封面/歌词手势;⚠ 弹幕动画会让 uiautomator 拿不到 idle(与封面旋转同坑),验收用截图+像素 diff)。播放页(2026-10-11 起为**底部上滑覆盖面板**,非导航页、也非 ModalBottomSheet——实测透明容器+全屏内容的 ModalBottomSheet 窗口**不接收任何输入**(按钮/滑动/返回全部穿透),改用组合内 `AnimatedVisibility` + `slideInVertically/slideOutVertically` overlay(AvSongApp 里 Scaffold 外层包 Box、面板在其后绘制,输入必然可达),`BackHandler(enabled=showPlayerSheet)` 拦截系统返回收起面板;迷你条黄钮与播放页底端右键都拉起它):全幅封面背景 + 55% 黑纱 + 两张深灰圆角卡(信息卡可点击切歌词)+ 黄色实心播放键;底部控制条:左端播放模式单键(cyclePlayMode,图标随模式变,顺序播放灰色)、右端队列抽屉入口;顶栏只剩左上收起箭头(裸图标,无圆形背景;右上收藏爱心已移入信息卡——点击弹 FavoritePickerDialog,弹窗内勾选经 `onDismissWithState` 回传同步爱心实心/描边;「加入歌单」按钮已移除);信息卡/控制卡为**半透明深灰卡 + 轻度模糊封面**(卡内铺 `blur(3.dp)` 封面(10dp 被用户反馈「有点过头」降到 3dp) + `surfaceContainerHigh.copy(alpha = if (dark) 0.85f else 0.92f)` 叠加(0.72 被用户反馈「太透」后上调;2026-10-12 浅色下 0.85 叠深色封面发浑提到 0.92,dark 以 surface 亮度判定),柔化与透明感兼得;无封面回退纯色;演变:18dp 重模糊被否「太丑」→ 实心 → 0.55 半透明被否「太透」→ 加深 0.72 + 轻模糊 3dp);进度条为**音波样式**(WaveformSeekBar:44 根稳定伪随机高度竖条,已播黄/未播灰,点击与横向拖动直接 seek,**已播部分用 `clipRect` 按进度像素级裁剪**——边界条平滑填充,不做整格跳变(用户反馈一格一格很怪异);拖动中显示预览位、松手才真正 seek);控制键为**裸白色图标**(用户要求全项目图标不带黑色圆底,CircleButton 组件已删,控制行用 `CompositionLocalProvider(LocalContentColor provides if (dark) Color.White else onSurface)` 统一注入(浅色下白图标在浅卡上不可见,2026-10-12 改),模式键激活态仍单独 primary 高亮);⚠ 播放面板根节点必须消费点击(`clickable(null-indication){}`),否则点击/拖动会穿透到面板后面的内容——实测踩过(误切歌、误导航);当前曲在队列列表的 `primaryContainer` 深黄高亮。共享列表组件在 `ui/common/`,改样式一处生效。⚠ MuMu 截屏可能滞后输入一帧(像素级验证会误判「点了没反应」),UI 状态验证以 `uiautomator dump` 的节点存在性为准;但 2026-10-11 实测两个坑:① 迷你条封面旋转动画会让 dump 报 `could not get idle state` 且**静默留下旧 ui.xml**(读起来像「部署回退了」的假象)——先 `rm /sdcard/ui.xml` 再 dump 并确认成功输出,或先发 KEYCODE_MEDIA_PAUSE(127)停掉动画;② 长视频的「下载」不要拿来当测试项(65h 的课程视频会流式下不完)。
+### 主题与设置
 
-底部迷你条环形进度 / 交叉淡入淡出 / 首页定位钮(2026-10-12 加,MuMu 实测通过):① **迷你条播放键环形进度**(`MiniPlayerBar`):播放/暂停键外圈 Canvas 描边圆——底轨 `onSurfaceVariant` 25% + 进度弧 primary,纯描边无填充无底色;`positionProvider`(=AvSongApp 传 `viewModel::currentPosition`)只在播放中每 500ms 采样,暂停即停但环保留当前值。⚠ **尺寸收敛史(用户四轮反馈,别再放大)**:图标 24dp(带 33dp 环)被指「比队列图标大太多」→ 误放大 30dp+36dp 环被回「没有任何改变」(环/队列比例 2.5→2.7 几乎没动,用户看的是**带环整组**)→ 22dp+28dp → 最终 **图标 18dp + 环 22dp**(环外径 = 队列图标的 22dp 占位;实测图标墨迹 30×36px vs 队列 53×50px,外框齐平)。② **交叉淡入淡出**(`MusicService`):Media3 1.11.1 **没有可用的 crossfade API**(全量扫 aar 无 `setCrossfadeDurationMs`),手写实现——曲末 6s(`FADE_OUT_MS`)按剩余时长等比例渐弱到 0 → ExoPlayer 自动切下一首 → 音量 0→1 用 2.5s(`FADE_IN_MS`)渐强;**手动切歌/暂停/拖动进度一律立刻回满音量**。⚠ 实测坑:`onPlayWhenReadyChanged` 在**自动切歌时不触发**(播放从未停过),渐强必须挂 `onMediaItemTransition`(reason=AUTO)里做,否则新曲永远停在音量 0(踩过,表现为「切歌后没声音」);单曲循环同一首回到开头不算切歌(否则越播越轻,用 `crossfadeFrom` 比对);队尾无下一首时撤掉渐弱(否则下一轮起播是哑的)。调试此功能可在 `fadeOut` 起点与 transition 回调打 `Log.i("BiliSongRepository", ...)` 观察(验证完记得删)。③ **首页「定位当前播放」悬浮圆钮**(`HomeScreen`):34dp 半透明圆(底 `surfaceVariant` 55%、图标 18dp、右缘 30dp 底 20dp),压在列表右下角;**榜内没有当前曲时按钮不出现**(点了也没得定位);点击 → `MainViewModel.locateInHome()`:在 `homeSongs` 找当前曲,未加载则续拉最多 3 页(页码每轮从 `rankPage`/`popularPage` 取,防闭包快照取重复页),仍未找到则**静默返回 null、不弹任何提示**(2026-10-12 用户明确要求去掉 Toast:按钮本就只在榜内含当前曲时出现,找不到多半是实时榜刷新把歌挤出已加载页);返回的整榜下标 -3 即列表行号(列表是 `drop(3)`),前三首(精选卡)定位滚到列表顶部。`SongList` 为此新增 `listState` 参数(可外部持有)与 `contentTopPadding`(滚到第 0 行不贴精选卡)。④ **列表封面 `ContentScale.Crop`**(`ui/common` 的 `CoverArt`):B 站封面宽高比不定,不指定会按 Fit 缩放出白边,统一裁剪撑满 52dp 圆角框。
+- 色板+色相轮盘走 ModalBottomSheet,**不自动关**(逐色预览);轮盘拖动 `previewHue` 只改内存、松手 `persistHue` 落盘(每帧写盘太重)。
+- 设置卡在「我的」页,展开后进 `PlaybackSettingsScreen`(音质/历史上限/倍速/睡眠/热评);选项用 `SettingsExpandableItem` **行内展开**(用户否掉了弹抽屉样式),同一时间只展开一项。
+- 倍速持久化在 `SettingsStore.playbackSpeed`;⚠ app 启动 collect settings **必须 `launch(Dispatchers.Main)`**——appScope 是 Dispatchers.Default,MediaController 跨线程调 `setPlaybackSpeed` 直接 IllegalStateException 崩(踩过)。
+- 睡眠定时只存内存不持久化(睡醒残留倒计时比丢设置更糟);到点只 pause 不 toggle,否则恰好暂停时被反手起播。
+- 硬币数是 nav 的 `data.money`,`data.coin` 是 B 币余额常缺省(docs §9);进「我的」tab 静默刷一次资料(只刷一次防 collect 循环)。
+- **会话失效三分**(`QrLogin.fetchProfileResult()`):`Ok` 更新资料 / `Invalid`(-101 或 isLogin=false)清会话退未登录 / `Error`(网络、-412)保留会话下次再试。⚠ 网络失败绝不能判为未登录,会把还能用的登录误踢掉。
 
-主题化提示条 / 队列去重 / 首页自动轮播(2026-10-14 加,MuMu 实测):① **主题化提示条 ThemedNoticeHost**(`ui/common/ThemedNotice.kt`):全项目系统 Toast 已清零,统一走它(下载/队列插入反馈在 AvSongApp 全局挂,清理缓存反馈在 LibraryScreen,删除下载反馈在 DownloadedScreen)。用**透明 Dialog 窗口**承载——当初选 Toast 而非 Snackbar 就是因为队列抽屉是独立窗口会盖住 Snackbar;Dialog 窗口设 `FLAG_NOT_FOCUSABLE|FLAG_NOT_TOUCHABLE` + `setDimAmount(0f)` = 纯悬浮、不压暗页面(遮罩被用户点名去掉)、不挡触摸、不吃返回键,每次新消息都是新建窗口天然压在抽屉窗口之上。样式走 M3 对比色 token(inverseSurface 药丸 + inverseOnSurface 文字),夜间/浅色自动适配,无阴影无渐变(用户:系统 Toast 带机器人图标且配色固定,与主题脱节)。展示 2.4s 后淡出再回调 onConsumed 置空源流。② **显式队列操作按 mediaId 去重**(用户实测:连点长按会堆出一串一模一样的歌):PlayerController.playNext 已在队列=摘出重插到当前曲后(removeMediaItem+addMediaItem,不动播放)、就是当前曲=不动;addToQueue 已在队列=不加;两都经回调区分文案(已插入/就是当前这首/已在队列已移到下一首/已在队列里不重复添加)。此前注释里「显式加入队列不受限」是旧设计,已废。③ **首页精选卡自动轮播**(8s/页 AUTO_CAROUSEL_MS,用户拖动抢占动画=捕获 CancellationException 放弃本轮):⚠ **卡死坑(实测翻一次就停)**:精选卡是小卡宽+右缘露边布局,末页吸附位超过 pager 最大滚动量被夹住 → 倒数两页吸附点重合 → currentPage 永远到不了 size-1、canScrollForward 恒 true,按「到末页回卷」写必卡死。修法=卡住检测:记上轮请求页,这轮发现 currentPage 没到达它(顶进不可达区)就回卷第 0 页。别监听 interactionSource 判用户操作:foundation 1.8 起 interactions 是 Flow 且程序化滚动也发事件,自动翻页会把自己误判成用户操作永久暂停。④ **爱心回显双缓存**(FavoriteRepository):fetchAid 进程内按 bvid 缓存(aid 不变,失败不缓存);checkFavorite 30s TTL 单条缓存(快切同一首不重复打接口),写操作 modify() 成功后 invalidateFavCheck() 保证回显新鲜。此前每切一首=两次网络往返,期间爱心是描边,快切闪烁。⑤ **到底提示**:SongList 拉完分页(hasMore=false 且非空)显示「— 没有更多了 —」,与加载中转圈互斥;首页/搜索/歌单详情共用。⑥ 用户撤掉(2026-10-14 简洁诉求,别再加回):首页标题行的更新时间/播放全部、回顶部悬浮钮。
-首页下拉刷新(2026-10-08 补,MuMu API32 + AVD API36 实测:空态下拉 → `spi`/`rank` 重新请求 → 列表恢复):内容区用 material3 的 `PullToRefreshBox`(1.4.0 起稳定 API,无需 opt-in),`onRefresh` 接 `MainViewModel.loadRanking()`;黄色标题块留在刷新区之外,下拉时不动。两条硬约束:① 指示器必须自绘纯色黄圆(箭头随进度旋转 → 刷新中转圈),不能用 `PullToRefreshDefaults.Indicator`——它带 elevation 阴影,违反「禁阴影」设计约束;② 空态/短内容必须由可滚动容器承载(空态是单条 `LazyColumn` + `fillParentMaxSize`),静态 `Column` 不产生 nested scroll 事件,提示文案里的「下拉重试」会变成摆设。
+### 播放与队列
 
-首页发现区五源(2026-10-09 加,MuMu API32 实测五源全通;**2026-10-11 起五源入口从 UI 摘除,首页只展示热歌榜**;`MainViewModel` 的 `HomeSource`/`homeCache`/`selectHomeSource` 机制原样保留,恢复五源只需在 UI 接线):「热歌榜 / 推荐 / 热门 / 排行 / 最近」「热歌榜 / 推荐 / 热门 / 排行 / 最近」,五个源共用 `MainUiState` 的 `homeXxx` 一套状态,`HomeSource` 枚举携带 label/title/subtitle。配方见 [docs/bilibili-api.md](docs/bilibili-api.md) §13:推荐=`rcmd` 推荐流(**内容是全站泛推荐,非音乐垂直**)、热门=`popular`(**唯一支持翻页的源**,`no_more=true` 才是没有下一页)、排行=`ranking/v2?rid=3`(音乐区,**本接口只认 rid=0/3**,子分区全 -400)、最近=`history/cursor`(需登录,`ps` 上限 30,非视频条目按 `history.bvid` 空过滤)。三条硬约束:① **cid 一律不用**,四源都经 `bili://` 现取(与搜索一致,规避榜单 cid 陷阱);② 这些接口的 `duration` 是**秒**,不是搜索那种 `"3:46"`;③ 入状态前 `distinctBy { it.bvid }` —— 列表 key 是 bvid,历史里同视频多看几个分P会有重复 key,**LazyColumn 重复 key 直接崩**。「最近」带**续播**:`progress` 秒数进 `Song.resumePositionMs` → `playQueue(items, index, startPositionMs)`,实测点「听到 00:26」的歌起播在 26s;进度提示走独立的 `Song.progressHint`(只在列表行拼在歌手名后),**不能拼进 artist**,否则播放器和通知栏也会挂着「听到 00:26」。切源走内存缓存 `homeCache`(切回不重复请求),下拉刷新走 `loadHome(force=true)` 强制重取。**热歌榜支持上拉加载更多**:`getRankingPage(pn)`(接口实测 pn/ps 有效),loadMoreHome 与热门同模式;新增为 0(到底)即停;已在真机验证第 21+ 行可出现。合集详情播放走 `playWithFill`:已加载部分立即起播,剩余页后台拉取并逐批 `appendSongsToQueue` 追加进队列(徽标持续增长;单页失败重试 2 次后中止)——此前只入列已加载页,是用户看到「978 首合集队列只有 20/360 首」的原因;收藏夹 FolderContentScreen 同构,尚未接同款补全。
+- 点歌行为:**列表点行 = `playNow`(插当前曲后一位立即播,已在队列跳播,不换队列)**;「播放全部/随机播放」= 整队替换。两种意图各有入口,别混。
+- 播放队列唯一入口 = 迷你条/播放页的队列抽屉(ModalBottomSheet,双 tab「当前播放/历史播放」),无独立队列页。历史播放 = 本地 `PlayHistoryStore`,**不用 B 站 history 接口**(那是观看历史,app 播放不上报)。
+- 队列补全(`playWithFill`):已加载页立即播,剩余页后台逐批 `appendSongsToQueue`。⚠ 三重护栏缺一不可:查真 `_loadingAll` flow(有 UiState 同名字段永远 false,勿用)、`PlayerController.session` 代次(playQueue/clearQueue 自增,代次变了补全立即中止)、append 按 mediaId 去重(幂等)。978 首合集曾并发涨到 1716 首的教训。
+- **补全进行中的点击不能被护栏静默吞掉**:详情页 onPlay 三分流——搜索过滤子集(引用不等)→ 整队播;`loadingAll` 进行中 → 单首 playNow;否则 playWithFill。onShuffle 同理(进行中 = 已加载部分 shuffled 整队替换)。
+- 歌单详情头部「播放」= 整队替换(`playWithFill(replace=true)`);**点行仍是插播不换队**(用户定的交互)。
+- 显式队列操作按 mediaId 去重:playNext 已在队列 = 重插到当前曲后;addToQueue 已在队列 = 不加。连点长按堆出一串重复歌的教训。
+- ⚠ 开 shuffle 必须把 repeatMode 从 ONE 拉回 ALL——ExoPlayer 里 ONE 优先级高于 shuffle,否则「当前曲无限循环」(`cyclePlayMode` 和 `toggleShuffle` 都有此防护,新入口也要做)。
+- 交叉淡入淡出手写(Media3 1.x 无 crossfade API):曲末 6s 渐弱→自动切换→2.5s 渐强;⚠ 渐强必须挂 `onMediaItemTransition(reason=AUTO)`——`onPlayWhenReadyChanged` 自动切歌时不触发(踩过,表现为切歌后没声音);单曲循环同一首不算切歌;手动切歌/暂停/seek 立即回满音量。
+- 歌单卡片播放三态高亮:MainViewModel `markPlayingPlaylist("folder:<id>"/"collection:<seasonId>"/"local:<id>")`,player 状态必须**以参数传入**组合(无参普通函数不会重组,实测)。⚠ B 站接口无播放数,卡片徽标放**项数**(media_count/total)。
 
-UP 主合集=歌单(2026-10-10 加,MuMu 实测全链路通过:粘链接添加→meta 回显→978 首大合集翻页→点歌整队入列播放;**2026-10-12 起合集区 = 本地订阅 ∪ B 站账号「我追的合集」**,自动同步不再需要手动贴链接——数据源是 collected/list 的混装列表里 type==21 的条目,`platform=web` 参数必带(不带则合集条目不返回,这是「B 站没接口」旧结论的根因);两者按 seasonId 去重、本地优先;追合集条目 mid 可能缺省,进详情/播放时 CollectionRepository.page 按 season_id 反查 UP(匿名接口,进程调用一次):「合集」区(2026-10-10 加在「我的」页;2026-10-11 起随歌单中心整体移到「歌单」tab 顶部、收藏夹区上方),右上「+」弹对话框粘贴 `space.bilibili.com/<mid>/lists/<sid>?type=season` 链接。配方见 [docs/bilibili-api.md](docs/bilibili-api.md) §14:`seasons_archives_list` 一次给 meta+曲目(翻页换 page_num),UP 名经 `card` 接口 best-effort 补齐(**新版大 mid 的 card 返回 name=null,老端点 -799、wbi 版 -352,拿不到就留空,UI 副标题禁止渲染悬空「· 」**)。B 站没有「订阅的合集」列表接口——自己 mid 查 `seasons_series_list` 返回的是自建合集(实测确认),所以走本地订阅:`CollectionStore`(DataStore)按 (mid,seasonId) 去重持久化,最新在前。**type=series(系列)是另一套接口,未接**,解析时明确报错。添加流程:先 `CollectionRepository.parse()` 正则提取(纯函数,对话框内就地校验),再拉一页 meta(pageSize=1)确认合集存在并取标题/封面/总数入库;合集不存在时 code:0 但 data=null,要当错误处理。曲目条目**没有 owner、cid 可能 null**,hasMore 按 `total > pageNum*pageSize` 算。
+### 播放页与迷你条
 
+- 播放页 = 组合内 `AnimatedVisibility` 上滑覆盖面板(AvSongApp 里 Scaffold 外层 Box),**非导航页、非 ModalBottomSheet**(实测透明容器+全屏内容的 ModalBottomSheet 不接收任何输入);`BackHandler` 收起;**根节点必须 `clickable(null-indication){}` 消费点击**,否则点击/拖动穿透到后面内容(误切歌、误导航)。
+- 信息卡/控制卡 = blur(3dp) 封面 + `surfaceContainerHigh.copy(alpha = dark 0.85f / 浅 0.92f)`;进度条 = WaveformSeekBar 44 根伪随机竖条,已播部分 `clipRect` 像素级裁剪,拖动中只显示预览、松手才 seek;控制键裸白图标(浅色下经 `CompositionLocalProvider(LocalContentColor)` 注入 onSurface)。
+- **爱心(收藏态)= 双区合并判定** `favCheckedBili || 本地歌单任一含当前曲`(本地半区从 localPlaylistsState 实时派生;弹窗 onDismissWithState 只回写 B 站半区)。亮爱心点击 = **一键取消收藏**(`unfavoriteEverywhere(bvid)`:B 站所有收藏夹 + 所有本地歌单,需登录;未登录 B 站半区失败本地半区仍生效);灭 = 弹「收藏到」双区弹窗;**长按 = 无论状态都弹管理弹窗**(combinedClickable 需 ExperimentalFoundationApi)。
+- 热评弹幕:`ReplyRepository` 拉 `/x/v2/reply/main?type=1&oid=<aid>&mode=3`(docs §16),3 轨道飘过,`SettingsStore.danmakuEnabled` 开关(默认开);不消费点击,不挡封面/歌词手势。
+- 迷你条与底栏**熔接为一个圆角容器**:迷你条 24dp 上圆角、底栏下圆角、中缝贴合,经 `shape`/`outerPadding` 参数按同屏与否动态传形;播放页两者都隐藏。全局列表 `contentPadding bottom ≥ 120dp` 避让,否则最后一排被裁半截。
+- 迷你条播放键带环形进度(Canvas 弧),**图标 18dp + 环 22dp(用户多轮收敛的最终尺寸,别再放大)**;缓冲中(`PlayerState.isBuffering`)换 18dp 小转圈防连点。
 
-首页一分为二版式(2026-10-11 参考设计稿改版,MuMu API32 实测:轮播横滑/点卡起播/时长显示全通过):精选区 = 黄色圆角块(16dp 圆角)与 `HorizontalPager` 同层叠放 —— 黄块高度只包到卡片 `CARD_OVER_YELLOW=0.82f` 处,pager 以固定偏移(`PAGER_START`=黄边距+内边距,与标题左缘对齐)绝对定位,卡片下沿自然压到深色底,右缘露下一张卡边(卡片可越出黄块右界)。卡尺寸 `CARD_H=190dp`、`CARD_WIDTH_FRACTION=0.48f`(用户两轮要求卡改小、尤其宽度;窄卡+宽露边是必然结果,露边≈卡宽属预期)。四条实现要点:① `FEATURED_COUNT=3`,轮播 = `homeSongs.take(3)`,列表 = `drop(3)` + `SongList.rankOffset=3` 接名次;**队列仍传整榜**(onPlay 包装成 `onPlay(homeSongs, index + 3)`),歌单页/迷你条上下文不缺歌;② 榜单接口条目顶层无时长,`RankItem` 补了 `related_archive.duration`(秒)做行尾时长,没有该对象的条目不显示;③ `SongList`/`SongRow` 新增 `showPlayButton`(默认 true,搜索页不受影响)与 `rankOffset`(默认 0)参数;④ 卡上不放歌名药丸(用户要求已删),右下 40dp 播放键是唯一控件:图标随 `state.player` 切换,`mediaId == currentMediaId` 时整卡点击走 `onTogglePlayPause`(HomeScreen 新增 `onPlayPause` 参数由 AvSongApp 接 `viewModel::playPause`),否则走 `onPlay` 入列整榜 —— 播放中点卡=暂停,暂停中点卡=续播,别让按钮停在旧状态;⑤ 下方列表的当前播放行:歌名 primary 高亮(浅色下改 onSurface 加粗——主题色标题在浅底发闷,且整行药丸底被用户否掉「不需要整行显示」撤回,2026-10-12)+ 播放中**整封面**盖黑色遮罩(跟随封面 12dp 圆角,`matchParentSize`,夜间 45%/浅色 12%——浅色 45% 反馈糊、25% 仍嫌深,用户反馈小徽章太突兀后改整盖)内嵌居中 `PlayingEqualizer` 音波条(4 根错相位竖条,`SongList` 新增 `currentMediaId`/`isPlaying` 参数按 `song.mediaId` 匹配;Canvas 读动画值只重绘不重组;搜索页未传参不受影响,队列页自己的 primaryContainer 高亮未动)。两个实测坑:热歌榜是**实时榜**,每次下拉刷新顺序都会变,LazyColumn 按 mediaId key 锚定,刷新后原地那首歌直接显示新名次(实测 4→8→17,不是滚动错位);MuMu 测试机是 **360dp 窄屏(wm density 640 = 4x)**,adb 手势坐标按 1dp=4px 换算,且精选区与列表之间的空档里拖动会触发下拉刷新而非滚动。
+### 首页
 
-「歌单」tab(2026-10-11 起为**歌单中心** = UP 主合集 + B 站收藏夹,位于搜索与我的之间;2026-10-08~10 它曾是播放队列壳页,用户拍板「播放队列只留抽屉」后整个替换,`ui/queue/PlaylistScreen.kt` 已删除):实现在 `ui/library/PlaylistScreen.kt`,**无黄色标题横幅**(用户当日要求砍掉:横幅上的「新建收藏夹」+ 与合集区的 + 看着冗余)——「合集 (N)」行带「添加合集」+、「我创建的 (N)」行带「新建收藏夹」+(空夹时此行仍在,不然新建入口消失;对话框含 名称/简介(可选,写入接口的 intro)/公开-私密 **Switch**(2026-10-11 用户指定样式;收藏弹窗的快捷建夹不带简介,传空 intro))。该页支持**下拉刷新**(2026-10-11 用户要求:PullToRefreshBox + `ui/common` 的 `FlatRefreshIndicator` 纯色圆指示器,与首页同一份;刷新收藏夹列表,合集是本地订阅不刷;已有内容时刷新保持列表可见,全屏转圈只在首载——`hasContent` 判定,刷新失败也保留旧列表不占屏报错)。**版式(用户当日指定)= 两列 `LazyVerticalGrid` 卡片,上方正方形封面 + 下方歌单名(2 行省略)**:封面左上角半透明黑纱数字徽标、右下角**裸白色播放图标(30dp,无底色,可点区 40dp)**——图标对比度靠封面**底部向上渐变黑纱**(0.45 透明 → 底 55% 黑;这是用户明确要求的渐变例外,全局「禁渐变」不含此遮罩;初版黄圆底被用户否掉)。右下角图标**跟随播放状态三态**(2026-10-14 用户要求,对齐首页精选卡):正在播本歌单=动画音波条(点击暂停)、暂停中=播放三角(点击续播)、未在播=播放三角(点击播整个歌单)。判定依据:MainViewModel 记录 `playingPlaylistKey`(folder:<id>/collection:<seasonId>) + 起播时队列首曲 anchor,`playingPlaylistId(player)` 在 AvSongApp 组合期传入——必须以参数传入 player 状态(它随 playerState collect 重组),写成无参普通函数不会重组(实测:点了播放卡片仍是 ▶)。两条硬约束:① **B 站收藏夹/合集的列表接口没有播放数字段**(`cnt_info.play` 只是单视频的),徽标放的是**项数**(media_count/total,≥1万缩写 x.x万),别当播放数用;② 播放钮 = **直接播整个歌单**:MainViewModel `playFolderPlaylist`/`playCollectionPlaylist` 第一页整队入列立即起播,后台**逐页追加进队列**(2026-10-12 起与详情页补全同款,此前只入列 20 首),失败/空歌单走 `queueNotice`→Toast。⚠ **队列补全的并发坑(实测:978 首合集队列涨到 1716 且一路上涨)**:`playWithFill` 的护栏原来查 `UiState.loadingAll`(该字段无任何写入,永远 false),多个补全循环并发追加;修法=查真正的 `_loadingAll` flow + 在 launch 前同步占位 + `PlayerController.appendSongsToQueue` 按 **mediaId 对现有队列去重**(补全幂等,显式「加入队列」走 addToQueue 不受限)+ `PlayerController.session` 代次(playQueue/clearQueue 自增):补全循环代次变了立即中止,不把旧歌单的剩余页灌进新队列。**MuMu 实测(2026-10-12):详情页连点 3 次播放(含补全进行中那次),队列精确封顶 978,不再增长。**两列卡片都支持**长按弹操作菜单**(2026-10-12 用户要求补入口,此前合集长按直删无提示、收藏夹删除根本没接线):合集卡菜单=「取消订阅」(确认弹窗;执行时**先 POST /x/v3/fav/season/unfav 真取消 B 站追合集**——未追过会报错则忽略,再移除本地订阅并刷新,保证不会因 B 站还在追而"复活");自建收藏夹卡菜单=「删除收藏夹」(确认弹窗,红色确认键——B 站远端删除不可撤销,文案注明视频本身不受影响);「收藏的」(别人的夹)无菜单。**详情页顶栏也有「⋮」菜单**(2026-10-12 用户要求,更常规的入口,不喜长按):收藏夹详情=「删除收藏夹」、合集详情=「取消订阅」,确认弹窗与网格长按路径同一套 VM 动作(`FolderContentViewModel.deleteFolder`/`CollectionContentViewModel.unsubscribe`);删除/取消成功后 `onBack()` 返回,歌单页 `LaunchedEffect(Unit){ vm.refreshIfLoaded() }` 拉新(首载由 VM init 负责不重复请求),卡片立刻消失;删除失败在详情页弹「操作失败」对话框(`FolderContentViewModel.UiState.actionError`);`CollectionStore.removeBySeasonId` 兜底追合集条目无 mid 的情况。删除失败不再静默:`LibraryViewModel.UiState.actionError` 就地红字提示(原来 runCatching 吞掉,失败看起来像没反应)。**封面坑:`created/list-all` 实测 cover 全为 null**(它是「选择收藏夹」弹窗的轻量端点),展示列表必须用分页版 `created/list`(网页 favlist 同款,带 cover+has_more,`FavoriteRepository.myFolders()` 已用 ps=20 循环拉页、上限 5 页防死循环),见 docs §11。合集区(标题行带计数与「添加合集」+)在前、收藏夹(「我创建的/收藏的」)在后;点卡片进 FolderContentScreen/CollectionContentScreen(路由不变);未登录时收藏夹必拉取失败,错误区给「重试 + 去登录」。⚠ 最后一排卡片的播放钮会被迷你条熔接容器裁掉下半截(网格视口底 ≈ 迷你条顶),自动化测试点它要取可视区中部坐标。播放队列的唯一直路口 = 迷你条/播放页的队列抽屉(QueueContent 仅剩这一个调用方)。
+- 版式:黄色圆角块与 `HorizontalPager` 同层叠放——黄块只包到卡片 0.82 高度,卡下沿压深色底、右缘露下一张卡边。`FEATURED_COUNT=3`:轮播 = take(3),列表 = drop(3) + rankOffset=3 接名次;**onPlay 仍传整榜**(包装成 `onPlay(homeSongs, index + 3)`),迷你条/歌单上下文才不缺歌。
+- 精选卡自动轮播 8s/页:⚠ 末页吸附位被夹住时 currentPage 永远到不了 size-1,按「到末页回卷」写必卡死——用「上轮请求页这轮未到达」检测回卷第 0 页;别监听 interactionSource 判用户操作(程序化滚动也发事件,会把自己误判成用户操作永久暂停)。
+- 播放键三态:正在播本曲=暂停图标、暂停中/非本曲=播放图标;当前曲点卡走 onPlayPause,**别让按钮停在旧状态**。
+- 定位当前播放悬浮钮:榜内无当前曲不出现;`locateInHome` 找不到**静默返回不弹提示**(按钮本就只在榜内含当前曲时出现)。
+- 下拉刷新 `PullToRefreshBox`:指示器必须自绘纯色圆(`ui/common/RefreshIndicator.kt`,组件库 Indicator 带 elevation 阴影违反禁阴影);空态必须由可滚动容器承载(静态 Column 不产生 nested scroll,「下拉重试」是摆设)。
+- 五源机制(MainViewModel `HomeSource`/`homeCache`)保留但 UI 已摘除,首页只展示热歌榜;恢复只需 UI 接线。配方 docs §13(⚠ 五源接口 duration 是秒、入状态前 `distinctBy { it.bvid }` 防 LazyColumn 重复 key 崩溃)。
 
-歌单详情页(2026-10-11 参考网易云式详情稿改版,MuMu 截图验收):收藏夹内容页与合集内容页共用 `ui/library/PlaylistDetailContent.kt` 的 `PlaylistDetailContent`——顶栏只留裸返回键(原 TopAppBar 标题+播放全部已删);头部 = 104dp 方封面 + 右侧元信息/大标题/UP 名 + 「播放(黄实心)/随机播放(深灰)」双胶囊;曲目行 = 双位序号(**播放中**的当前曲换成 `PlayingEqualizer` + `surfaceContainerHigh` 圆角垫底、标题 primary 高亮;当前曲但**暂停**时行首回退为播放三角——与队列抽屉同款。实测踩过:原来只判 isCurrent 不看 isPlaying,暂停的当前曲顶着动画音波条装成在播)+ 标题 + UP·时长,行尾「⋯」菜单 = 下一首播放/加入队列/下载/(收藏夹专属:从收藏夹移除——原行尾 X 收进菜单),长按行弹同款菜单。下载走 MainViewModel `downloadSong(context, song)`(任意歌曲,不必在队列里;`downloadCurrentSong` 是它的当前曲特化,队列抽屉在用),实测行菜单下载 1 分钟视频音频正常落盘。「随机播放」= MainViewModel `playQueueShuffled`(先退单曲循环再开 shuffle,ONE 优先级高于 shuffle),仍只入列**已加载页**;合集与收藏夹的「播放」都走 `playWithFill`(已加载部分先播,后台拉剩余页**逐批追加进队列**,单页失败重试 2 次防 -412;收藏夹版 2026-10-14 补上,与合集版同构,数据源换成收藏夹分页接口)。**歌单内搜索**(用户当日要求,顶栏右上放大镜):进入搜索态(顶栏换成自动聚焦的搜索框)即触发 VM `loadAll()` 把剩余页全部拉进 state——大合集(978 首)要搜得到必须全量,期间进度行「正在加载全部歌曲… 已加载 N 首」实时可见;按标题/UP 名**不区分大小写**实时过滤,点行播放的是**过滤子集**;返回键退出搜索,已拉的全量保留(普通列表随之变全)。loadAll 与 playWithFill 共用 `loadingAll` 标记互斥,进行中 loadMore 让位防竞态。⚠ **搜索播放两坑(2026-10-14 用户实测)**:① 加载中点结果行没反应——playWithFill 的护栏把搜索加载期间的点击静默吞了;② 点过滤子集第 3 首播的是全量列表第 3 首(点「黄霄雲」出来「张惠妹」)。修法:搜索期间的播放**直接整队过滤子集**(普通 playQueue,绕开 playWithFill 与其护栏),合集详情页用 `playing === state.songs` 引用相等判断区分「普通列表点击」与「搜索过滤点击」。实测:加载中点行立即播、点过滤第 3 首播的正是它。两个坑:① 收藏夹详情头部封面接口不回,用第一首 coverUrl 兜底(B 站网页收藏夹缩略图本来就是首视频封面);② 合集条目无 owner,UP 名为空时副标题不渲染、行副行只显示时长。**「定位当前播放」悬浮钮**(2026-10-13 用户要求,歌单/合集曲目太多不好找):列表右下角 34dp 半透明圆钮(与首页定位钮同款交互),当前曲在本歌单里才出现;点击 `animateScrollToItem(曲目下标+1)`(index 0 是 header)——目标超出已加载范围时先逐次触发 loadMore 把页拉出来再滚(LazyColumn 只有可见项,长列表里当前曲未加载时定位必须先加载)。
+### 歌单中心与详情页
 
-**歌单详情头部「播放」= 整队替换,不是插播**(2026-10-15 用户实测两 bug 同根因:① 点播放不换队,旧队列一直挂着;② 旧队列与合集的重复曲被补全的 mediaId 去重跳过(停在旧位置),合集里那几首反而没进队、总数对不上)。修法=`PlaylistDetailContent` 新增头部专用 `onPlayAll`(缺省回退 onPlay(songs,0));合集/收藏夹详情经 `playWithFill(replace=true)`(replace 绕过 _loadingAll 护栏——playQueue 自增 session 让旧补全循环自动中止,不会双开);本地歌单详情头部直接 playQueue(全量在内存)。**点行仍是插播不换队**(用户定的交互,不动)。三个详情页签名新增 `onPlayQueue: (List<Song>) -> Unit`,AvSongApp 接 `viewModel.playQueue(songs, 0)`。
+- 「歌单」tab = 四类歌单:本地歌单 / 合集 / 我创建的 / 收藏的;两列网格卡片(PlaylistCard)。合集 = 本地订阅(`CollectionStore`)∪ B 站「我追的合集」(collected/list 的 type==21 条目,⚠ **`platform=web` 必带**,不带则合集条目不返回);B 站没有「订阅合集列表」接口(自己 mid 查返回的是自建合集)。配方 docs §14。
+- 取消订阅 = **先 POST unfav 真取消 B 站侧**(未追过报错则忽略)再删本地订阅,否则会"复活";删除/取消成功后 `onBack()`,歌单页在返回回调里 `refreshIfLoaded()` 拉新。删除失败不再静默(就地红字/弹窗报 `actionError`)。
+- 详情页(收藏夹/合集/本地)共用 `ui/library/PlaylistDetailContent.kt`:沉浸头部(blur 封面垫底;收藏夹封面接口不回,用第一首 coverUrl 兜底)+ 播放/随机双胶囊 + 行尾 ⋯ 菜单(下一首播放/加入队列/下载/收藏/移出)+ 长按同款菜单 + 歌单内搜索 + 定位钮 + 补全进度行。本地歌单薄包装(loading/hasMore 恒 false),专属「从歌单移除」经 `removeSongLabel` 参数;合集条目无 owner,UP 名为空时副标题不渲染。
+- 歌单内搜索:进入搜索态即 `loadAll()` 拉全量(978 首大合集必须全量才搜得到);点过滤子集播过滤子集——**用引用相等(`playing === state.songs`)区分普通列表与过滤列表,别按下标**(实测点第 3 首播出全量第 3 首的坑)。
+- 定位钮:目标未加载时先逐次 loadMore 再滚(LazyColumn 只有可见项,长列表里未加载的行定位不到)。
+- 曲目行当前曲:**播放中**显示音波条,**暂停中回退为播放三角**——只判 isCurrent 不看 isPlaying 会装成在播(踩过)。
 
-**护栏吞点击的收尾(2026-10-15 第二批)**:① 「随机播放」同样被 loadAll 护栏吞(补全进行中点它没反应)——合集/收藏夹详情 onShuffle 三分流:loadingAll 进行中就把已加载部分 `songs.shuffled()` 整队替换(用户点的是随机不是等全量),空闲时维持 loadAll 全量后洗。② 大合集补全无进度感——`PlaylistDetailContent` 新增 `loadingHint: String?`(列表 header 下方一行小字,合集显示[已加载 N/total,补全中…],收藏夹无 total 显示已加载 N;null 不渲染)。③ 插播等待反馈——`PlayerState` 新增 `isBuffering`(toState 取 playbackState==STATE_BUFFERING),迷你条播放键缓冲中换成 18dp 小转圈(CircularProgressIndicator,primary 色;防连点)。首页/搜索页骨架屏用户另开会话做,本会话不碰。
+### 本地歌单与下载
 
-**合集/收藏夹详情补全进行中的点击不能被护栏吞掉**(2026-10-15 用户实测:978 首合集点播放后补全要跑几十秒,期间点任何行都没反应,像「要加载完才播」)——`playWithFill` 的 `_loadingAll` 护栏对普通列表点击也静默 return(2026-10-14 只修了搜索路径)。修法=详情页 onPlay 三分流:搜索过滤子集(引用不等)→ 整队播;`loadingAll` 进行中 → `onPlay(listOf(那首), 0)` 直播一首(AvSongApp 接的 playNow:插当前曲后立即播,不换队列不动 session,补全循环继续灌同一队列);否则才 `playWithFill`。收藏夹详情同构同修。
+- `LocalPlaylistStore` 纯 DataStore,不走 B 站接口,未登录可用;`LocalTrack` 存**完整快照含 aid**;歌单内按 bvid 去重。**不含手机本地音频文件**(那是「本地曲库」,未立项),存的是 B 站歌曲快照。
+- 「存入本地歌单」**统一走 FavoritePickerDialog 双区**(上半 B 站收藏夹、下半本地歌单,勾选=存入/移出、就地新建)——独立的存歌单菜单项已删(与收藏重复,用户要求收敛)。
+- 播放本地歌单 `playLocalPlaylist`:快照全量内存、无补全循环;**离线联动 = 按 bvid 查 `DownloadedStore` 元数据拿 fileName→`file://` 填 audioUrl**——⚠ 别用 fileOf 拼文件名(标题快照与下载时不一致)。
+- 已下载:文件名 `<bvid>_<安全标题>.m4a`(防同名覆盖);`scanOrphans()` 开页双向同步(剪「有记录无文件」、补「有文件无记录」);下载页顶栏放大镜 = 本地过滤搜索(纯内存不走网络)。
+- 未做(等真需要):下载并发队列/进度/取消、下载目录可选、共享目录。
 
-本地自建歌单(2026-10-15 加,MuMu 冒烟通过:区块渲染→新建落盘→重启恢复;详情页/存入弹窗/播放链路待用户上手验):「歌单」tab 顶部新增**第四种歌单**(本地歌单/合集/我创建的/收藏的),纯 `LocalPlaylistStore`(DataStore JSON,`data/LocalPlaylistStore.kt`)持久化,**不依赖登录、不走任何 B 站接口**。要点:① `LocalPlaylist(id=时间戳,name,createdAt,tracks)` + `LocalTrack(bvid,title,artist,coverUrl,durationSec,aid)` —— 曲目存**完整快照含 aid**(收藏不再 fetchAid),歌单内按 bvid 去重(addSong 返回 false → queueNotice 提示「已在歌单里」);② 歌单页复用 `PlaylistCard`(封面=首曲 coverUrl 兜底,徽标=曲目数),长按=重命名/删除(都带确认),标题行「+」新建(对话框只要名称——简介/公开开关是 B 站概念);③ 详情页 `LocalPlaylistContentScreen` 薄包装 `PlaylistDetailContent`(loading/hasMore 恒 false、onLoadMore 空实现,自动获得沉浸头部/双胶囊/歌单内搜索/定位钮),专属「从歌单移除」(`PlaylistDetailContent` 移除项文案参数化为 `removeSongLabel`,收藏夹不受影响)+ 顶栏 ⋮ 重命名/删除(删除后 playlist 变 null → LaunchedEffect 自动 onBack);④ 「存入本地歌单」**统一走收藏弹窗**(2026-10-15 用户反馈「收藏/存入歌单两项重复」后收敛:独立菜单项 `onSaveToPlaylist` 与 `LocalPlaylistPickerDialog` 已整体删除)——`FavoritePickerDialog` 扩为**双区**:上半 B 站收藏夹(原样),下半「本地歌单」分组(`localPlaylists`/`onToggleLocal`/`onCreateLocal` 三个可选参数,不传即旧行为),勾选=存入/移出、就地新建,纯 DataStore 落盘零网络;全部收藏入口(播放页爱心/队列抽屉/列表行)一键两通,未登录也能勾本地歌单;目标曲快照:AvSongApp 按 队列→播放历史→最小快照(bvid 兜底,标题可能空)取,PlayerScreen 用当前曲 PlayerState 字段拼;⑤ 播放 `MainViewModel.playLocalPlaylist`:快照全量内存**无补全循环**,markPlayingPlaylist("local:<id>")+playQueue 两步,卡片三态高亮自动生效;**离线联动**=按 bvid 查 `DownloadedStore.state` 拿 fileName→file:// 填 audioUrl(已下载的歌在本地歌单里断网也能播)——⚠ 不能用 fileOf 拼文件名(标题快照与下载时不一致),必须走元数据查。`MainViewModel` 构造新增 localPlaylistStore/downloadedStore 两个参数(工厂同步)。⚠ 并行会话踩坑:本功能开发期间工作区被并行修改,PlaylistScreen 的网格区块曾被覆盖丢失(参数在、区块没了,编译不报错但 UI 不显示)——**改动后 grep 验证关键 UI 文本是否仍在文件里**。
+### 搜索页
 
-已下载离线曲库(2026-10-13 加,MuMu 实测:下载→file:// 播放→断网 force-stop 重启续播→删除→孤儿兼容→计数同步全通过):下载链路从「下了没处找」升级为闭环。① **文件名带 bvid 前缀** `<bvid>_<安全标题>.m4a`(修掉旧版同名歌互相覆盖;重下同一首=覆盖更新),落盘后写 `DownloadedStore`(DataStore JSON 元数据:标题/歌手/封面/时长/大小,目录仍应用私有 `getExternalFilesDir(MUSIC)`,不动 SAF)。② **「我的」页存储组**两行:「已下载 N 首」→ `Routes.DOWNLOADED` 下载页(复用 `SongList`,长按行菜单加「删除」——`SongRow`/`SongList` 为此加 `onRemove` 参数,红色字、模态确认);「清理缓存」行尾显示当前图片缓存大小(进页 IO 线程测,清理后自刷新);下载页顶栏右上放大镜=本地搜索(标题/歌手不区分大小写过滤,无匹配出空态;纯内存过滤不走网络,2026-10-14 加)。③ **离线播放三处联动**(见陷阱 15):resolver 下游包 `DefaultDataSource.Factory` 才认 file://;`MediaItem.localConfiguration?.uri` 才是 Media3 1.x 取 uri 的正确姿势;`PersistedItem` 新增 `uri` 字段(@Serializable 默认值兼容旧快照),否则重启后离线曲被还原成 bili:// 断网即挂。④ **下载曲的 Song 保持 `bvid`=真实 id、`audioUrl`=`file://…`**,mediaId 不变 → 收藏/歌词/历史/队列去重零改动可用。⑤ `DownloadedStore.scanOrphans()` 开页双向同步:剪「有记录无文件」(外部删过,计数不虚高)+ 补「有文件无记录」(旧版无 bvid 前缀的遗留文件以文件名兜底合成,不丢歌)。⚠ 测试坑:MuMu 上 `svc wifi disable` 会**连带断掉 adb 的网络通道**(设备 offline),恢复要用 `MuMuManager.exe sh -v 0 -c "svc wifi enable"`(宿主直连不依赖 adb);并发会话(BiliTune)同机抢前台时 `dumpsys media_session | grep -m1` 会抓到**它的会话**,验证 avsong 状态要按包名过滤段落。**未做**(等以后真需要):下载并发队列/进度/取消、下载目录可选、共享目录让别的播放器也能读。
-
-搜索页增强包(2026-10-15,本会话):**点歌行为全面改为插队即播**——搜索结果/首页榜单(含前3精选卡)/歌单收藏夹合集详情页点行 = `PlayerController.playNow`:插到当前曲后一位立即播,已在队列跳播,不替换队列;「播放全部/随机播放」仍是整队替换,两种意图各有入口。长按菜单四项统一(下一首播放/加入队列/收藏/下载,收藏弹 FavoritePickerDialog 经 `favoriteTargetBvid` 复用播放页弹窗;详情页行菜单也补了收藏)。搜索头部:「已加载 N 首/共 N 首」诚实计数(⚠ B站 numResults 封顶 1000 无真实总数,勿再接),「播放全部」钮,BV/av 直达单曲(size==1&&!hasMore)隐藏头部控件;**筛选 chips 做了又移除**(用户不需要,全链含 Models 两个枚举已删,勿复活)。搜索中保留旧结果不闪白(`Loading(previous)` 携带旧 Result),首搜显示 `SkeletonList` 骨架(纯 alpha 呼吸,合规禁渐变;首页首载同款),首页歌单中心网格未接。**联想浮层仅 Idle 态显示**(2026-10-15 三修:任何态显示会在结果页挂着不消失;`search()` 启动时清 suggestQuery 防回 Idle 闪旧词)。历史 chip 连点竞态:`searchGeneration` 代次守卫+job 取消,旧响应后到被丢弃。清空历史=模态确认;历史chip与输入框×均无涟漪(裸Icon+clickable涟漪是方形底)。键盘 imeAction=Search 直搜。⚠ 实测坑:合集**不可搜索**(`search_type=season/series` 全 -1200,`all/v2` 无合集类型,见 docs §13b),别再探。⚠ 并行会话事故两次:① 对方重写 SearchScreen 调用点把 onFavorite/onDownload/onOrderChange/onDurationChange 挤掉(签名有默认空实现所以编译不报错,表现为「点了没反应」)——**改共享调用点时先 grep 现有参数**;② 对方写本地歌单半成品让整树编译不过,构建失败先看错误文件是不是自己的。MuMu 抓骨架/动画帧用连拍(screencap 滞后一拍),`svc wifi disable` 断 adb 的坑已记载,恢复走 MuMuManager。
+- 联想 = `androidx.compose.ui.window.Popup` 浮层(独立窗口,不占布局不推走历史/结果,点外部自动关)——**别用 Column+zIndex**(浮层与 when 内容非同父时 zIndex 无效,平铺进 Column 又推走内容,两版都被否);**仅 Idle 态显示**(任何态显示会挂在结果页不消失);250ms 防抖 + mapLatest;阈值 ≥1 字。配方 docs §12。
+- 头部计数「已加载 N / 共 N」诚实显示:⚠ B 站 `numResults` 封顶 1000,无真实总数,勿接。
+- 搜索中 `Loading(previous)` 携带旧结果不闪白;首搜显示 `SkeletonList` 骨架(纯 alpha 呼吸,合规禁渐变)。
+- 历史 chip 连点竞态:`searchGeneration` 代次守卫 + job 取消,旧响应后到被丢弃;清空历史 = 模态确认;键盘 imeAction=Search 直搜。
+- **合集不可搜索**(`search_type=season/series` 全 -1200,docs §13b),别再探。
+- 勿复活清单(用户明确撤掉):搜索筛选 chips、播放页速度键(倍速在设置卡)、首页标题行更新时间/播放全部钮、回顶部悬浮钮、首页五源切换入口、QueueContent 上下移重排按钮(参数保留无处显示)。
