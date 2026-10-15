@@ -10,6 +10,8 @@ import dev.avsong.AvSongApp
 import dev.avsong.data.lyric.LyricLine
 import dev.avsong.data.lyric.LyricRepository
 import dev.avsong.domain.NotLoggedInException
+import dev.avsong.domain.SearchDuration
+import dev.avsong.domain.SearchOrder
 import dev.avsong.domain.Song
 import dev.avsong.domain.SongRepository
 import dev.avsong.data.BiliSongRepository
@@ -22,6 +24,10 @@ import dev.avsong.data.BiliHttp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -29,13 +35,17 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 sealed interface SearchUiState {
     data object Idle : SearchUiState
-    data object Loading : SearchUiState
+
+    /** 加载中;保留上一份结果(换词搜索时旧列表原地挂着不闪白,响应到达后整体替换)。 */
+    data class Loading(val previous: Result? = null) : SearchUiState
     data class Result(
         val songs: List<Song>,
         val keyword: String = "",
         val page: Int = 1,
         val hasMore: Boolean = false,
         val loadingMore: Boolean = false,
+        val order: SearchOrder = SearchOrder.COMPREHENSIVE,
+        val duration: SearchDuration = SearchDuration.ANY,
     ) : SearchUiState
     data class Error(val message: String) : SearchUiState
 }
@@ -118,6 +128,10 @@ class MainViewModel(
     val playHistory = playHistoryStore.history
 
     private var lastHistoryMediaId: String? = null
+
+    /** 搜索代次:每次 search() 自增;响应只认可代次相符的(防连点两个词时旧响应后到覆盖新结果)。 */
+    private var searchGeneration = 0
+    private var searchJob: kotlinx.coroutines.Job? = null
 
     /**
      * 起播即记历史:当前曲变化时记一次快照(同曲的状态刷新不重复记)。
@@ -315,18 +329,34 @@ class MainViewModel(
             if (query.isBlank()) cur.copy(query = query, search = SearchUiState.Idle)
             else cur.copy(query = query)
         }
+        suggestQuery.value = query.trim()
     }
+
+    /** 搜索联想词(输入防抖 250ms 后拉取;Idle/Loading 态不显示)。 */
+    private val suggestQuery = MutableStateFlow("")
+    val suggests: StateFlow<List<String>> = suggestQuery
+        .debounce(250)
+        .mapLatest { term ->
+            if (term.isEmpty()) emptyList()
+            else runCatching { repository.suggest(term) }.getOrDefault(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun search() {
         val q = _state.value.query.trim()
         if (q.isEmpty()) {
+            searchJob?.cancel()
             _state.update { it.copy(search = SearchUiState.Idle) }
             return
         }
-        _state.update { it.copy(search = SearchUiState.Loading) }
-        viewModelScope.launch {
-            // 响应回来时输入框内容已变(清空/改词)则丢弃,防止过期结果覆盖当前状态
-            fun stale() = _state.value.query.trim() != q
+        // 作废在途请求:新代次生效,旧响应即使后到也会被代次比对丢弃
+        searchJob?.cancel()
+        val gen = ++searchGeneration
+        val prevForLoading = _state.value.search as? SearchUiState.Result
+        _state.update { it.copy(search = SearchUiState.Loading(prevForLoading)) }
+        searchJob = viewModelScope.launch {
+            // 双保险:代次比对(防旧响应覆盖)+ 输入框内容比对(防改词后旧词结果生效)
+            fun stale() = gen != searchGeneration || _state.value.query.trim() != q
             try {
                 // 1. BV/av/分享链接直达
                 repository.resolveDirect(q)?.let { direct ->
@@ -336,8 +366,11 @@ class MainViewModel(
                     }
                     return@launch
                 }
-                // 2. 普通搜索第一页
-                val result = repository.search(q, 1)
+                // 2. 普通搜索第一页(筛选条件从当前 Result 态读取,重搜沿用)
+                val prev = _state.value.search as? SearchUiState.Result
+                val order = prev?.order ?: SearchOrder.COMPREHENSIVE
+                val duration = prev?.duration ?: SearchDuration.ANY
+                val result = repository.search(q, 1, order, duration)
                 searchHistoryStore.add(q)
                 if (!stale()) _state.update {
                     it.copy(
@@ -346,6 +379,8 @@ class MainViewModel(
                             keyword = q,
                             page = 1,
                             hasMore = result.hasMore,
+                            order = order,
+                            duration = duration,
                         ),
                     )
                 }
@@ -355,14 +390,14 @@ class MainViewModel(
         }
     }
 
-    /** 上拉加载下一页,追加到现有结果。 */
+    /** 上拉加载下一页,追加到现有结果(沿用当前筛选)。 */
     fun loadMoreSearch() {
         val cur = _state.value.search as? SearchUiState.Result ?: return
         if (!cur.hasMore || cur.loadingMore || cur.keyword.isEmpty()) return
         viewModelScope.launch {
             _state.update { it.copy(search = cur.copy(loadingMore = true)) }
             try {
-                val next = repository.search(cur.keyword, cur.page + 1)
+                val next = repository.search(cur.keyword, cur.page + 1, cur.order, cur.duration)
                 val merged = (cur.songs + next.items).distinctBy { it.bvid }
                 _state.update {
                     it.copy(
@@ -378,6 +413,21 @@ class MainViewModel(
                 _state.update { it.copy(search = cur.copy(loadingMore = false)) }
             }
         }
+    }
+
+    /** 搜索筛选(排序/时长):设置后立即用当前关键词重搜。 */
+    fun setSearchOrder(order: SearchOrder) {
+        val cur = _state.value.search as? SearchUiState.Result ?: return
+        if (cur.order == order) return
+        _state.update { it.copy(search = cur.copy(order = order)) }
+        search()
+    }
+
+    fun setSearchDuration(duration: SearchDuration) {
+        val cur = _state.value.search as? SearchUiState.Result ?: return
+        if (cur.duration == duration) return
+        _state.update { it.copy(search = cur.copy(duration = duration)) }
+        search()
     }
 
     fun removeHistory(term: String) {
@@ -425,6 +475,29 @@ class MainViewModel(
     }
 
     /**
+     * 正在播的歌单(卡片右下角音波条/暂停态的判定依据):
+     * key = "folder:<id>" / "collection:<seasonId>",anchor = 起播时队列首曲 mediaId。
+     * 判定 = 当前队列首项仍是 anchor(补全/切歌不影响;换队列则失效,由调用方覆盖)。
+     * 用 StateFlow 而不是普通函数:queue 变化只在 playerState collect 里推进 UI,
+     * 普通函数在组合期调用不会因 queue 更新而重组(实测:点了播放,卡片仍显示 ▶)。
+     */
+    private val playingPlaylistKey = MutableStateFlow<String?>(null)
+    private var playingPlaylistAnchor: String? = null
+
+    /** 当前哪个歌单在播(供歌单页卡片高亮);null=没有歌单在播或队列已被替换。 */
+    fun playingPlaylistId(player: PlayerState): String? {
+        val key = playingPlaylistKey.value ?: return null
+        val anchor = playingPlaylistAnchor ?: return null
+        val first = player.queue.firstOrNull() ?: return null
+        return key.takeIf { first.mediaId == anchor }
+    }
+
+    private fun markPlayingPlaylist(key: String, firstSong: Song) {
+        playingPlaylistKey.value = key
+        playingPlaylistAnchor = firstSong.mediaId
+    }
+
+    /**
      * 歌单卡片右下播放钮:直接播整个歌单(第一页整队入列立即起播),
      * 后台继续拉剩余页**逐批追加进队列**(与合集详情页 playWithFill 同一目标:
      * 队列从 20 首一路长到全量)。用户期间切了别的播放/清空队列则中止补全。
@@ -438,6 +511,7 @@ class MainViewModel(
                     _queueNotice.value = "这个歌单还是空的"
                     return@launch
                 }
+                markPlayingPlaylist("folder:$folderId", first.songs.first())
                 playQueue(first.songs, 0)
                 val session = playerController.session
                 var songs = first.songs
@@ -477,6 +551,7 @@ class MainViewModel(
                     _queueNotice.value = "这个合集还是空的"
                     return@launch
                 }
+                markPlayingPlaylist("collection:$seasonId", first.songs.first())
                 playQueue(first.songs, 0)
                 val session = playerController.session
                 var songs = first.songs
@@ -507,18 +582,24 @@ class MainViewModel(
         }
     }
 
-    /** 「下一首播放」(列表行长按):插到当前曲后面,不打断播放、不动现有队列。 */
+    /**
+     * 「下一首播放」(列表行长按):插到当前曲后面,不打断播放、不动现有队列。
+     * 已在队列 = 移到当前曲后、当前曲本身 = 不动(PlayerController 内判定),提示相应区分。
+     * 先设默认提示再下发指令:已连接时回调同步执行覆盖它,未连接时异步覆盖,终值都正确。
+     */
     fun playNext(song: Song) {
         if (song.aid > 0) aidCache[song.bvid] = song.aid
-        playerController.playNext(song.toMediaItem())
         _queueNotice.value = "已插入下一首播放"
+        playerController.playNext(song.toMediaItem()) { isCurrent ->
+            _queueNotice.value = if (isCurrent) "就是当前这首" else "已在队列,已移到下一首"
+        }
     }
 
-    /** 「加入队列」(列表行长按):追加到队尾,不改动播放位置。 */
+    /** 「加入队列」(列表行长按):追加到队尾;已在队列不重复添加(否则连点会堆出一串重复歌)。 */
     fun addToQueue(song: Song) {
         if (song.aid > 0) aidCache[song.bvid] = song.aid
-        playerController.addToQueue(song.toMediaItem())
         _queueNotice.value = "已加入队列"
+        playerController.addToQueue(song.toMediaItem()) { _queueNotice.value = "已在队列里,不重复添加" }
     }
 
     /**
@@ -533,7 +614,11 @@ class MainViewModel(
     suspend fun aidFor(bvid: String): Long =
         aidCache[bvid] ?: favoriteRepository.fetchAid(bvid).also { aidCache[bvid] = it }
 
+    /** 倍速播放(「我的」页设置;PlayerController 转发)。 */
+    fun setPlaybackSpeed(speed: Float) = playerController.setPlaybackSpeed(speed)
+
     fun playPause() = playerController.playPause()
+
     // ---------- 睡眠定时(定时关闭) ----------
     //
     // 语义:设 N 分钟后暂停播放(不退出 app、不停服务,用户醒来还能续播)。

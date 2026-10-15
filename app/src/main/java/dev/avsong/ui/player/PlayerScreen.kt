@@ -48,8 +48,10 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -64,6 +66,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.geometry.CornerRadius
@@ -100,35 +103,44 @@ fun PlayerScreen(
     onPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
     onCycleMode: () -> Unit,
-    /** 热评展示:danmakuEnabled 开关 + danmakuMode(0=弹幕,1=列表抽屉)。 */
+    /** 热评展示:danmakuEnabled 开关 + danmakuMode(0=弹幕,1=列表抽屉);数据由本页按需拉取。 */
     danmakuEnabled: Boolean = true,
     danmakuMode: Int = 0,
-    onToggleDanmaku: () -> Unit = {},
-    hotReplies: List<dev.avsong.data.ReplyRepository.HotReply> = emptyList(),
     positionProvider: () -> Long = { state.positionMs },
 ) {
     var position by remember(state.currentMediaId, state.isPlaying) { mutableLongStateOf(state.positionMs) }
     var showLyric by remember { mutableStateOf(false) }
-    // 热评弹幕:开关开且换曲时拉一次(失败=空列表,弹幕层静默不显示)。
-    // 注意 key 用 currentMediaId+danmakuEnabled:关再开会重新拉(数据可能已过期)
-    var hotRepliesState by remember(state.currentMediaId, danmakuEnabled) {
-        mutableStateOf<List<dev.avsong.data.ReplyRepository.HotReply>?>(null)
-    }
-    // 列表抽屉模式(mode=1)的开合;点开时若还没拉数据则拉
+    // 热评数据:点热评键时按需拉一次(进页不自动拉不自动飘,用户要求;失败=空列表静默)
+    var hotRepliesState by remember { mutableStateOf<List<dev.avsong.data.ReplyRepository.HotReply>?>(null) }
+    var repliesLoading by remember { mutableStateOf(false) }
+    // 列表抽屉模式(mode=1)的开合
     var showReplySheet by remember { mutableStateOf(false) }
-    LaunchedEffect(state.currentMediaId, danmakuEnabled) {
-        hotRepliesState = null
-        if (danmakuEnabled && state.currentMediaId != null) {
+    // 弹幕模式(mode=0)的开合:点热评键开/再点关;两模式都是点击触发,不再自动显示
+    var showDanmaku by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    // 弹幕/抽屉共用的按需加载:没拉过才发请求(换曲后 hotRepliesState 已被清空自然重拉)
+    fun ensureReplies() {
+        val bvid = state.currentMediaId ?: return
+        if (hotRepliesState != null || repliesLoading) return
+        repliesLoading = true
+        scope.launch {
             val song = dev.avsong.domain.Song(
-                bvid = state.currentMediaId!!,
+                bvid = bvid,
                 title = state.title.orEmpty(),
                 artist = state.artist.orEmpty(),
                 coverUrl = state.artworkUri,
             )
-            hotRepliesState = dev.avsong.data.ReplyRepository.hotRepliesFor(song) { bvid ->
-                favoriteRepository.fetchAid(bvid)
+            hotRepliesState = dev.avsong.data.ReplyRepository.hotRepliesFor(song) { it ->
+                favoriteRepository.fetchAid(it)
             }
+            repliesLoading = false
         }
+    }
+    // 换曲清数据;若弹幕开着则自动重拉(用户开着的弹幕换曲不消失,后续曲也持续有弹幕)
+    LaunchedEffect(state.currentMediaId) {
+        hotRepliesState = null
+        repliesLoading = false
+        if (showDanmaku) ensureReplies()
     }
     // 收藏:爱心回显 + 弹窗开关(声明在函数级,信息卡爱心与弹窗共用)
     var favChecked by remember(state.currentMediaId) { mutableStateOf(false) }
@@ -143,7 +155,6 @@ fun PlayerScreen(
     }
     // 浅色/夜间分支用:主题不带 isDark 标记,以 surface 亮度判定(两套方案的 surface 差异极大)
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val scope = rememberCoroutineScope()
 
     // 播放中每秒采样一次进度
     LaunchedEffect(state.currentMediaId, state.isPlaying) {
@@ -234,19 +245,27 @@ fun PlayerScreen(
                         ) { showLyric = false },
                 )
             } else {
-                Spacer(Modifier.weight(1f))
-            }
-
-            // 热评弹幕层:叠在上半区(封面/歌词之上),权重 1f 区域内飘过;
-            // 不消费点击 → 封面点击切歌词/歌词点击 seek 的手势不受影响
-            // 歌词态不显示弹幕:读歌词的沉浸模式,飘字干扰(用户反馈)
-            if (!showLyric && danmakuEnabled && danmakuMode == 0 && hotRepliesState.orEmpty().isNotEmpty()) {
+            // 热评弹幕层:点热评键才显示(进页不自动飘)。占满整个上层区——封面态原本
+            // Spacer 与弹幕层各 weight 一半,上部全空着(用户反馈),改为弹幕开着时不放 Spacer。
+            // 横向破出 Column 的 16dp 内边距(左右各扩 16dp):弹幕必须贴真正屏幕边缘游入游出,
+            // 否则裁剪边界落在半路,字符被「切」在离屏边 16dp 处(用户实测突兀)。
+            // 不消费点击 → 封面点击切歌词/歌词点击 seek 的手势不受影响;歌词态不显示(沉浸阅读)
+            if (showDanmaku && hotRepliesState.orEmpty().isNotEmpty()) {
                 ReplyDanmaku(
                     replies = hotRepliesState.orEmpty(),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .weight(1f)
+                        .layout { measurable, constraints ->
+                            val extra = 16.dp.roundToPx()
+                            val p = measurable.measure(
+                                constraints.copy(minWidth = constraints.minWidth + extra * 2, maxWidth = constraints.maxWidth + extra * 2)
+                            )
+                            layout(p.width, p.height) { p.place(-extra, 0) }
+                        },
                 )
+            } else {
+                Spacer(Modifier.weight(1f))
             }
 
             // 信息卡:半透明纯色卡(卡内不再各铺一份模糊封面——两张卡各裁一块封面,
@@ -296,31 +315,24 @@ fun PlayerScreen(
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    // 列表模式(mode=1)的热评入口:点开 3/4 屏抽屉;弹幕模式热评常驻上半区,无需入口
-                    if (danmakuEnabled && danmakuMode == 1 && !showLyric) {
+                    // 热评键(两种模式统一,均点击触发不自动显示):
+                    // 弹幕模式=开/关弹幕(激活 primary 高亮);抽屉模式=开热评列表抽屉。
+                    // 首次点击按需拉数据(ensureReplies),没拉过才发请求
+                    if (danmakuEnabled && !showLyric) {
                         IconButton(
                             onClick = {
-                                showReplySheet = true
-                                if (hotRepliesState == null) {
-                                    scope.launch {
-                                        val song = dev.avsong.domain.Song(
-                                            bvid = state.currentMediaId.orEmpty(),
-                                            title = state.title.orEmpty(),
-                                            artist = state.artist.orEmpty(),
-                                            coverUrl = state.artworkUri,
-                                        )
-                                        hotRepliesState = dev.avsong.data.ReplyRepository.hotRepliesFor(song) { bvid ->
-                                            favoriteRepository.fetchAid(bvid)
-                                        }
-                                    }
-                                }
+                                ensureReplies()
+                                if (danmakuMode == 0) showDanmaku = !showDanmaku else showReplySheet = true
                             },
                             modifier = Modifier.size(44.dp),
                         ) {
                             Icon(
                                 Icons.AutoMirrored.Rounded.Chat,
-                                contentDescription = "查看热评",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                contentDescription = if (danmakuMode == 0) "热评弹幕" else "查看热评",
+                                tint = when {
+                                    danmakuMode == 0 && showDanmaku -> MaterialTheme.colorScheme.primary
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
                             )
                         }
                     }
@@ -352,6 +364,7 @@ fun PlayerScreen(
             }
             }
             }
+            } // 外层 else(showLyric==false 分支)收尾
 
             Spacer(Modifier.height(12.dp))
 
@@ -458,7 +471,17 @@ fun PlayerScreen(
                         hotRepliesState == null -> Box(
                             Modifier.fillMaxWidth().padding(vertical = 32.dp),
                             contentAlignment = Alignment.Center,
-                        ) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp) }
+                        ) {
+                            if (repliesLoading) {
+                                CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                            } else {
+                                Text(
+                                    "加载失败",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
 
                         hotRepliesState.orEmpty().isEmpty() -> Text(
                             "暂无热门评论",

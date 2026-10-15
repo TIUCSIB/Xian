@@ -30,6 +30,7 @@ fun CollectionContentScreen(
     onShuffle: (List<Song>) -> Unit,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
+    onFavorite: (Song) -> Unit,
     onDownload: (Song) -> Unit,
     /** ⋮ 菜单「下载全部」:把已加载的歌曲整批入队(队列自动去重已下载/已在队的)。 */
     onDownloadAll: (List<Song>) -> Unit,
@@ -57,12 +58,18 @@ fun CollectionContentScreen(
         onLoadMore = vm::loadMore,
         onBack = onBack,
         // 播放前先拉全量:否则大合集点播放只入列已加载的第一页(20 首)
-        onPlay = { _, index -> vm.playWithFill(index, onPlay) },
-        onShuffle = onShuffle,
+        // 搜索期间播过滤子集(直接整队,不走 playWithFill——它的 loadingAll 护栏会
+        // 吞掉搜索加载中的点击,且全量列表第 index 首与过滤子集第 index 首对不上,用户实测两 bug)
+        onPlay = { playing, index ->
+            if (playing === state.songs) vm.playWithFill(index, onPlay)
+            else onPlay(playing, index)
+        },
+        onShuffle = { loaded -> vm.loadAll { all -> onShuffle(all) } },
         currentMediaId = currentMediaId,
         isPlaying = isPlaying,
         onPlayNext = onPlayNext,
         onAddToQueue = onAddToQueue,
+        onFavorite = onFavorite,
         onDownload = onDownload,
         onRemoveSong = null,
         loadingAll = loadingAll,

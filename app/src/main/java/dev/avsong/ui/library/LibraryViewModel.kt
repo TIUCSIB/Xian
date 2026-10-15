@@ -224,7 +224,7 @@ class FolderContentViewModel(
     private val _loadingAll = MutableStateFlow(false)
     val loadingAll: StateFlow<Boolean> = _loadingAll.asStateFlow()
 
-    fun loadAll() {
+    fun loadAll(onDone: ((List<Song>) -> Unit)? = null) {
         if (_loadingAll.value) return
         viewModelScope.launch {
             _loadingAll.value = true
@@ -253,6 +253,7 @@ class FolderContentViewModel(
                 // 拉全量失败:保留已加载部分,搜索照常在已加载范围里过滤
             } finally {
                 _loadingAll.value = false
+                onDone?.invoke(_state.value.songs)
             }
         }
     }
@@ -479,7 +480,7 @@ class CollectionContentViewModel(
      * 搜索用的「加载全部」:把剩余页全部拉进 state(不动队列,与 playWithFill 的补队列分开),
      * 边加载边过滤。-412 防护同 playWithFill;失败保留已加载部分。
      */
-    fun loadAll() {
+    fun loadAll(onDone: ((List<Song>) -> Unit)? = null) {
         if (_loadingAll.value) return
         viewModelScope.launch {
             _loadingAll.value = true
@@ -513,6 +514,7 @@ class CollectionContentViewModel(
                 // 拉全量中止:保留已加载部分
             } finally {
                 _loadingAll.value = false
+                onDone?.invoke(_state.value.songs)
             }
         }
     }

@@ -88,6 +88,10 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
         appScope.launch { themeStore.load() }
         // 音质/历史上限等设置恢复(仓库层选路直接读它的内存流)
         appScope.launch { settingsStore.load() }
+        // 倍速:设置变更即应用。⚠ MediaController 只能在主线程调,collect 须在 Main(appScope 是 Default)
+        appScope.launch(Dispatchers.Main) {
+            settingsStore.state.collect { state -> playerController.setPlaybackSpeed(state.playbackSpeed) }
+        }
     }
 
     /**

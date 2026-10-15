@@ -32,6 +32,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Queue
 import androidx.compose.material3.CircularProgressIndicator
@@ -101,9 +103,11 @@ fun SongList(
     /** 当前播放曲的 mediaId:命中行的歌名高亮 + 播放中封面盖音波条徽章。 */
     currentMediaId: String? = null,
     isPlaying: Boolean = false,
-    /** 非空时长按行弹「下一首播放/加入队列/删除」菜单(不换队列);不传则无长按。 */
+    /** 非空时长按行弹菜单(下一首播放/加入队列/收藏/下载/删除);全空则无长按。 */
     onPlayNext: ((Song) -> Unit)? = null,
     onAddToQueue: ((Song) -> Unit)? = null,
+    onFavorite: ((Song) -> Unit)? = null,
+    onDownload: ((Song) -> Unit)? = null,
     /** 行菜单「删除」项(已下载页用:删文件+元数据);一般调用方传 null。 */
     onRemove: ((Song) -> Unit)? = null,
     hasMore: Boolean = false,
@@ -125,7 +129,7 @@ fun SongList(
 
     LazyColumn(
         state = listState,
-        contentPadding = PaddingValues(top = contentTopPadding, bottom = 24.dp),
+        contentPadding = PaddingValues(top = contentTopPadding, bottom = 120.dp),
     ) {
         itemsIndexed(songs, key = { _, s -> s.mediaId }) { index, song ->
             SongRow(
@@ -137,6 +141,8 @@ fun SongList(
                 onClick = { onPlay(songs, index) },
                 onPlayNext = onPlayNext,
                 onAddToQueue = onAddToQueue,
+                onFavorite = onFavorite,
+                onDownload = onDownload,
                 onRemove = onRemove,
             )
         }
@@ -148,6 +154,17 @@ fun SongList(
                 ) {
                     CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                 }
+            }
+        } else if (!hasMore && songs.isNotEmpty()) {
+            // 到底提示:分页列表拉完后再往下滑能明确看到尽头,而不是无声中断
+            item(key = "list-end") {
+                Text(
+                    "— 没有更多了 —",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
+                )
             }
         }
     }
@@ -164,6 +181,8 @@ fun SongRow(
     isPlaying: Boolean = false,
     onPlayNext: ((Song) -> Unit)? = null,
     onAddToQueue: ((Song) -> Unit)? = null,
+    onFavorite: ((Song) -> Unit)? = null,
+    onDownload: ((Song) -> Unit)? = null,
     onRemove: ((Song) -> Unit)? = null,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -286,6 +305,26 @@ fun SongRow(
                     DropdownMenuItem(
                         text = { Text("加入队列") },
                         leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, null) },
+                        onClick = {
+                            menuExpanded = false
+                            action(song)
+                        },
+                    )
+                }
+                onFavorite?.let { action ->
+                    DropdownMenuItem(
+                        text = { Text("收藏") },
+                        leadingIcon = { Icon(Icons.Rounded.FavoriteBorder, null) },
+                        onClick = {
+                            menuExpanded = false
+                            action(song)
+                        },
+                    )
+                }
+                onDownload?.let { action ->
+                    DropdownMenuItem(
+                        text = { Text("下载") },
+                        leadingIcon = { Icon(Icons.Rounded.Download, null) },
                         onClick = {
                             menuExpanded = false
                             action(song)

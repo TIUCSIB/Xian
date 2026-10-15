@@ -132,7 +132,7 @@ fun PlaylistScreen(
                 // 黄色大标题横幅已按用户要求去掉:它带的「新建收藏夹」+ 与合集区的 + 冗余,
                 // 新建入口收进「我创建的」标题行(2026-10-11)
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 24.dp),
+                contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 120.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {

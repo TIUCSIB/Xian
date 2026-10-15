@@ -1,6 +1,8 @@
 package dev.avsong.data
 
 import dev.avsong.domain.PagedResult
+import dev.avsong.domain.SearchDuration
+import dev.avsong.domain.SearchOrder
 import dev.avsong.domain.Song
 import dev.avsong.domain.SongRepository
 
@@ -36,7 +38,12 @@ class FakeSongRepository : SongRepository {
         ),
     )
 
-    override suspend fun search(keyword: String, page: Int): PagedResult<Song> {
+    override suspend fun search(
+        keyword: String,
+        page: Int,
+        order: SearchOrder,
+        duration: SearchDuration,
+    ): PagedResult<Song> {
         kotlinx.coroutines.delay(300)
         val hits = if (keyword.isBlank()) catalog
         else catalog.filter {

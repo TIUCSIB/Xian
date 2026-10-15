@@ -3,6 +3,7 @@ package dev.avsong.ui.settings
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.CoroutineScope
@@ -16,7 +17,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * 「我的」页设置项:默认音质 + 播放历史上限。
+ * 「我的」页设置项:默认音质 + 播放历史上限 + 倍速播放。
  * object 单例:BiliSongRepository/PlayHistoryStore 都是 object,选路/裁剪时直接读内存流,
  * 不经 Application 注入(与 BiliSongRepository 同款模式)。
  * DataStore 持久化;[init]+[load] 由 AvSongApp.onCreate 调一次。
@@ -38,7 +39,12 @@ object SettingsStore {
         val danmakuMode: Int = 0,
         /** 播放页热评展示开关(持久化;默认开)。 */
         val danmakuEnabled: Boolean = true,
+        /** 倍速播放(持久化;用户要求放「我的」页设置,是全局偏好而非每首歌的临时态)。 */
+        val playbackSpeed: Float = 1.0f,
     )
+
+    /** 倍速档位(「我的」页可选;循环切换同序)。 */
+    val SPEED_STEPS = listOf(1.0f, 1.25f, 1.5f, 2.0f, 0.75f)
 
     private val _state = MutableStateFlow(SettingsState())
     val state: StateFlow<SettingsState> = _state.asStateFlow()
@@ -55,6 +61,7 @@ object SettingsStore {
     private val KEY_HISTORY = intPreferencesKey("history_limit")
     private val KEY_DANMAKU = booleanPreferencesKey("danmaku_enabled")
     private val KEY_DANMAKU_MODE = intPreferencesKey("danmaku_mode")
+    private val KEY_SPEED = floatPreferencesKey("playback_speed")
 
     fun init(context: Context) {
         if (appContext == null) appContext = context.applicationContext
@@ -68,6 +75,7 @@ object SettingsStore {
             historyLimit = p[KEY_HISTORY] ?: 50,
             danmakuEnabled = p[KEY_DANMAKU] ?: true,
             danmakuMode = p[KEY_DANMAKU_MODE] ?: 0,
+            playbackSpeed = p[KEY_SPEED]?.takeIf { it > 0f } ?: 1.0f,
         )
     }
 
@@ -89,5 +97,12 @@ object SettingsStore {
     fun setDanmakuMode(value: Int) {
         _state.update { it.copy(danmakuMode = value) }
         scope.launch { datastore.edit { it[KEY_DANMAKU_MODE] = value } }
+    }
+
+    /** 倍速变更:落盘并即时应用到播放器(播放中也能立刻变速)。 */
+    fun setPlaybackSpeed(speed: Float, apply: (Float) -> Unit) {
+        _state.update { it.copy(playbackSpeed = speed) }
+        scope.launch { datastore.edit { it[KEY_SPEED] = speed } }
+        apply(speed)
     }
 }

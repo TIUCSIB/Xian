@@ -5,8 +5,15 @@ package dev.avsong.domain
  * 音频直链的获取不在这里:播放时由 ExoPlayer 的 ResolvingDataSource 经 bili:// 现取。
  */
 interface SongRepository {
-    suspend fun search(keyword: String, page: Int = 1): PagedResult<Song>
+    suspend fun search(
+        keyword: String,
+        page: Int = 1,
+        order: SearchOrder = SearchOrder.COMPREHENSIVE,
+        duration: SearchDuration = SearchDuration.ANY,
+    ): PagedResult<Song>
     suspend fun getRanking(): List<Song>
+    /** 搜索联想词;默认空(联想是增强,伪仓库/离线场景直接空列表)。 */
+    suspend fun suggest(keyword: String): List<String> = emptyList()
     /** 热歌榜分页(pn);默认空实现(伪仓库无分页,load-more 自动停)。 */
     suspend fun getRankingPage(page: Int): List<Song> = emptyList()
 

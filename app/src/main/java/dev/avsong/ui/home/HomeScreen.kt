@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,6 +25,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.MusicOff
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Pause
@@ -52,6 +55,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 import coil3.compose.AsyncImage
 import dev.avsong.domain.Song
 import dev.avsong.ui.MainUiState
@@ -63,6 +70,9 @@ import dev.avsong.ui.common.StateHint
 
 /** 精选轮播取榜单前 N 首,下方列表从第 N+1 首起(名次经 rankOffset 接着数)。 */
 private const val FEATURED_COUNT = 3
+
+/** 自动轮播间隔:每页停留 8s;用户拖动/触摸期间暂停。 */
+private const val AUTO_CAROUSEL_MS = 8000L
 
 /**
  * 首页(底部 tab「首页」):只展示热歌榜,布局一分为二(参考设计稿)——
@@ -81,6 +91,8 @@ fun HomeScreen(
     onLogin: () -> Unit,
     onPlayNext: (Song) -> Unit = {},
     onAddToQueue: (Song) -> Unit = {},
+    onFavorite: (Song) -> Unit = {},
+    onDownload: (Song) -> Unit = {},
     /** 「定位当前播放」:返回该曲在列表(第 4 首起)中的下标,null = 当前榜里没有这首歌。 */
     onLocate: suspend () -> Int? = { null },
 ) {
@@ -110,6 +122,8 @@ fun HomeScreen(
                 onTogglePlayPause = onPlayPause,
                 onPlayNext = onPlayNext,
                 onAddToQueue = onAddToQueue,
+                onFavorite = onFavorite,
+                onDownload = onDownload,
             )
 
             val pullState = rememberPullToRefreshState()
@@ -138,6 +152,8 @@ fun HomeScreen(
                         onPlay = { _, index -> onPlay(state.homeSongs, index + FEATURED_COUNT) },
                         onPlayNext = onPlayNext,
                         onAddToQueue = onAddToQueue,
+                        onFavorite = onFavorite,
+                        onDownload = onDownload,
                         showRank = true,
                         rankOffset = FEATURED_COUNT,
                         showPlayButton = false,
@@ -212,6 +228,8 @@ private fun FeaturedSection(
     onTogglePlayPause: () -> Unit,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
+    onFavorite: (Song) -> Unit,
+    onDownload: (Song) -> Unit,
 ) {
     // 首次加载(还没有任何歌曲)只留空,卡片依赖歌曲封面,数据到了再渲染
     if (loading && songs.isEmpty()) return
@@ -219,6 +237,36 @@ private fun FeaturedSection(
     val featured = songs.take(FEATURED_COUNT)
     val pagerState = rememberPagerState { featured.size }
     val pagerTop = 8.dp + TITLE_TOP + TITLE_ROW_H
+
+    // 自动轮播:每 8s 向前翻一页,到尾回卷第 0 页;用户拖动中跳过本轮。
+    // ⚠ 不能拿 currentPage 判断"到尾":小卡宽+右缘露边布局下,末页吸附位(2*步长)
+    // 远超最大滚动量,currentPage 永远停在倒数第二页——回卷条件永不成立,
+    // 表现为"翻一次就卡住不回卷"(实测)。改为按 canScrollForward 推进:
+    // 还能向前滚就走一页步长(animateScrollBy,末页同样可见),滚到头直接回卷第 0 页。
+    LaunchedEffect(featured.size) {
+        // 卡住检测:小卡+右缘露边布局下,末几页的吸附位被夹到最大滚动量处彼此重合,
+        // currentPage 永远到不了 size-1(canScrollForward 也恒 true)——按页号判断"到尾"
+        // 会永久卡死(实测)。改为:上轮请求的页这轮没到达 = 已顶进不可达区,回卷第 0 页。
+        var lastRequested = -1
+        while (isActive && featured.size > 1) {
+            delay(AUTO_CAROUSEL_MS)
+            if (pagerState.isScrollInProgress) continue
+            val current = pagerState.currentPage
+            // 没到达上轮请求的页 = 吸附位被夹住顶进不可达区(成功到达时 current == lastRequested)
+            val stuck = lastRequested > current
+            val next = when {
+                stuck || !pagerState.canScrollForward -> 0
+                else -> (current + 1).coerceAtMost(featured.size - 1)
+            }
+            lastRequested = if (next == 0) -1 else next
+            try {
+                pagerState.animateScrollToPage(next)
+            } catch (e: Exception) {
+                // 用户拖动抢占动画(CancellationException):放弃本轮
+                if (!isActive) throw e
+            }
+        }
+    }
 
     BoxWithConstraints(
         Modifier
@@ -266,6 +314,8 @@ private fun FeaturedSection(
                 },
                 onPlayNext = onPlayNext,
                 onAddToQueue = onAddToQueue,
+                onFavorite = onFavorite,
+                onDownload = onDownload,
             )
         }
     }
@@ -286,6 +336,8 @@ private fun FeaturedSongCard(
     onClick: () -> Unit,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
+    onFavorite: (Song) -> Unit,
+    onDownload: (Song) -> Unit,
 ) {
     val playingThis = isCurrent && isPlaying
     var menuExpanded by remember { mutableStateOf(false) }
@@ -368,6 +420,22 @@ private fun FeaturedSongCard(
                     onClick = {
                         menuExpanded = false
                         onAddToQueue(song)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("收藏") },
+                    leadingIcon = { Icon(Icons.Rounded.FavoriteBorder, null) },
+                    onClick = {
+                        menuExpanded = false
+                        onFavorite(song)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("下载") },
+                    leadingIcon = { Icon(Icons.Rounded.Download, null) },
+                    onClick = {
+                        menuExpanded = false
+                        onDownload(song)
                     },
                 )
             }

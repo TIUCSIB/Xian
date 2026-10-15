@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.MyLocation
@@ -55,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -96,6 +98,7 @@ fun PlaylistDetailContent(
     isPlaying: Boolean,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
+    onFavorite: (Song) -> Unit,
     onDownload: (Song) -> Unit,
     onRemoveSong: ((Song) -> Unit)? = null,
     /** 歌单内搜索:打开搜索时触发「加载全部」(大合集要搜得到就得全量),进度经 [loadingAll]。 */
@@ -109,6 +112,24 @@ fun PlaylistDetailContent(
     var query by remember { mutableStateOf("") }
     var moreExpanded by remember { mutableStateOf(false) }
 
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        // 沉浸式背景:歌单封面放大模糊 + 压暗,头部与列表浮在上面(参考播放页毛玻璃先例)。
+        // 只盖住 Scaffold 内容区,无封面时不垫(避免纯色上突兀的暗块)
+        if (!loading && error == null && songs.isNotEmpty() && cover != null && !searching) {
+            AsyncImage(
+                cover,
+                null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(24.dp),
+                contentScale = ContentScale.Crop,
+            )
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.72f)),
+            )
+        }
     Scaffold(
         topBar = {
             if (searching) {
@@ -189,6 +210,7 @@ fun PlaylistDetailContent(
                 onPlay = onPlay,
                 onPlayNext = onPlayNext,
                 onAddToQueue = onAddToQueue,
+                onFavorite = onFavorite,
                 onDownload = onDownload,
                 onRemove = onRemoveSong,
                 modifier = Modifier.fillMaxSize().padding(padding),
@@ -226,7 +248,7 @@ fun PlaylistDetailContent(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 16.dp),
+                    contentPadding = PaddingValues(bottom = 120.dp),
                 ) {
                     item(key = "header") {
                         DetailHeader(
@@ -247,6 +269,7 @@ fun PlaylistDetailContent(
                             onClick = { onPlay(songs, index) },
                             onPlayNext = onPlayNext,
                             onAddToQueue = onAddToQueue,
+                            onFavorite = onFavorite,
                             onDownload = onDownload,
                             onRemove = onRemoveSong,
                         )
@@ -286,6 +309,7 @@ fun PlaylistDetailContent(
                 }
             }
         }
+    }
     }
 }
 
@@ -427,6 +451,7 @@ private fun NumberedSongRow(
     onClick: () -> Unit,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
+    onFavorite: (Song) -> Unit,
     onDownload: (Song) -> Unit,
     onRemove: ((Song) -> Unit)?,
 ) {
@@ -510,6 +535,14 @@ private fun NumberedSongRow(
                     text = { Text("加入队列") },
                     onClick = {
                         onAddToQueue(song)
+                        menuExpanded = false
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("收藏") },
+                    leadingIcon = { Icon(Icons.Rounded.FavoriteBorder, null) },
+                    onClick = {
+                        onFavorite(song)
                         menuExpanded = false
                     },
                 )
@@ -598,6 +631,7 @@ private fun SearchResults(
     onPlay: (List<Song>, Int) -> Unit,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
+    onFavorite: (Song) -> Unit,
     onDownload: (Song) -> Unit,
     onRemove: ((Song) -> Unit)?,
     modifier: Modifier = Modifier,
@@ -636,7 +670,7 @@ private fun SearchResults(
         } else {
             LazyColumn(
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 16.dp),
+                contentPadding = PaddingValues(bottom = 120.dp),
             ) {
                 itemsIndexed(filtered, key = { _, s -> s.bvid }) { index, song ->
                     NumberedSongRow(
@@ -647,6 +681,7 @@ private fun SearchResults(
                         onClick = { onPlay(filtered, index) },
                         onPlayNext = onPlayNext,
                         onAddToQueue = onAddToQueue,
+                        onFavorite = onFavorite,
                         onDownload = onDownload,
                         onRemove = onRemove,
                     )

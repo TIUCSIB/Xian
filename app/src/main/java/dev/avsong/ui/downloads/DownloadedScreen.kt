@@ -1,6 +1,5 @@
 package dev.avsong.ui.downloads
 
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +46,7 @@ import dev.avsong.data.DownloadedTrack
 import dev.avsong.domain.Song
 import dev.avsong.ui.common.SongList
 import dev.avsong.ui.common.StateHint
+import dev.avsong.ui.common.ThemedNoticeHost
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -74,6 +74,8 @@ fun DownloadedScreen(
     val tracks by app.downloadedStore.state.collectAsState()
     val downloadTasks by app.downloadManager.tasks.collectAsState()
     var deleteTarget by remember { mutableStateOf<DownloadedTrack?>(null) }
+    // 删除结果反馈:主题化提示条(与全局队列/下载反馈同款,不用系统 Toast)
+    var deleteNotice by remember { mutableStateOf<String?>(null) }
     // 本地搜索:纯内存过滤,不走网络(与歌单详情页的搜索态同款交互,但无需 loadAll)
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -247,11 +249,7 @@ fun DownloadedScreen(
                     deleteTarget = null
                     scope.launch {
                         val deleted = app.downloadedStore.remove(target.bvid)
-                        Toast.makeText(
-                            context,
-                            if (deleted) "已删除" else "文件已不存在,记录已清理",
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                        deleteNotice = if (deleted) "已删除" else "文件已不存在,记录已清理"
                     }
                 }) {
                     Text("删除", color = MaterialTheme.colorScheme.error)
@@ -262,4 +260,6 @@ fun DownloadedScreen(
             },
         )
     }
+
+    ThemedNoticeHost(message = deleteNotice, onConsumed = { deleteNotice = null })
 }

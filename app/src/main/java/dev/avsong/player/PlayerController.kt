@@ -75,6 +75,9 @@ class PlayerController(private val context: Context) {
         if (ctrl.isPlaying) ctrl.pause() else ctrl.play()
     }
 
+    /** 只暂停(睡眠定时到点用:不能 toggle,否则恰好处于暂停时会变成起播)。 */
+    fun pause() = withController { it.pause() }
+
     fun seekTo(positionMs: Long) = withController { it.seekTo(positionMs) }
     fun skipToNext() = withController { it.seekToNext() }
     fun skipToPrevious() = withController { it.seekToPrevious() }
@@ -123,31 +126,54 @@ class PlayerController(private val context: Context) {
     /**
      * 「下一首播放」:插到当前曲后面,不打断播放、不动队列其余部分。
      * 队列为空时退化为单曲入列起播(与 playFromHistory 空队分支一致)。
+     * 已在队列时移到当前曲后面、就是当前曲时不动——重复插入会堆出一串一模一样的歌(用户反馈);
+     * 这两种情况经 [onAlreadyQueued] 通知调用方,不再按「已插入」提示。
      */
-    fun playNext(item: MediaItem) = withController { ctrl ->
-        if (ctrl.mediaItemCount == 0) {
-            ctrl.setMediaItems(listOf(item), 0, 0L)
-            ctrl.prepare()
-            ctrl.play()
-        } else {
-            ctrl.addMediaItem(ctrl.currentMediaItemIndex + 1, item)
+    fun playNext(item: MediaItem, onAlreadyQueued: (isCurrent: Boolean) -> Unit = {}) = withController { ctrl ->
+        val existing = (0 until ctrl.mediaItemCount).indexOfFirst {
+            ctrl.getMediaItemAt(it).mediaId == item.mediaId
+        }
+        when {
+            existing < 0 -> {
+                if (ctrl.mediaItemCount == 0) {
+                    ctrl.setMediaItems(listOf(item), 0, 0L)
+                    ctrl.prepare()
+                    ctrl.play()
+                } else {
+                    ctrl.addMediaItem(ctrl.currentMediaItemIndex + 1, item)
+                }
+            }
+            existing == ctrl.currentMediaItemIndex -> onAlreadyQueued(true)
+            else -> {
+                // 先摘后插,插入点按摘除后的索引算;Media3 移除非当前项不会动当前播放
+                ctrl.removeMediaItem(existing)
+                ctrl.addMediaItem(ctrl.currentMediaItemIndex + 1, item)
+                onAlreadyQueued(false)
+            }
         }
     }
 
-    /** 「加入队列」:追加到队尾,不改动播放位置。 */
-    fun addToQueue(item: MediaItem) = withController { ctrl ->
-        ctrl.addMediaItem(ctrl.mediaItemCount, item)
+    /** 「加入队列」:追加到队尾,不改动播放位置;已在队列不重复添加([onDuplicate] 通知调用方)。 */
+    fun addToQueue(item: MediaItem, onDuplicate: () -> Unit = {}) = withController { ctrl ->
+        val exists = (0 until ctrl.mediaItemCount).any {
+            ctrl.getMediaItemAt(it).mediaId == item.mediaId
+        }
+        if (exists) onDuplicate() else ctrl.addMediaItem(ctrl.mediaItemCount, item)
     }
 
     /**
      * 「点歌即播,不换队」:插到当前曲后面并立即播放,队列其余部分原样保留。
      * 已在队列则直接跳过去播(不重复入列);空队列退化为单曲起播。
+     * 点的就是当前曲时 = 切换暂停/续播(与首页精选卡一致),不从头重播。
      */
     fun playNow(item: MediaItem) = withController { ctrl ->
         val existing = (0 until ctrl.mediaItemCount).firstOrNull {
             ctrl.getMediaItemAt(it).mediaId == item.mediaId
         }
         when {
+            existing == ctrl.currentMediaItemIndex && ctrl.currentMediaItem != null -> {
+                if (ctrl.isPlaying) ctrl.pause() else ctrl.play()
+            }
             existing != null -> {
                 ctrl.seekTo(existing, 0L)
                 ctrl.play()
@@ -195,6 +221,9 @@ class PlayerController(private val context: Context) {
     /** 抽屉模式条的三态显式设置(循环/单曲/随机),不走 toggle。 */
     fun setRepeatMode(mode: Int) = withController { it.repeatMode = mode }
     fun setShuffle(enabled: Boolean) = withController { it.shuffleModeEnabled = enabled }
+
+    /** 倍速播放(Media3 原生支持;常速=1.0f)。 */
+    fun setPlaybackSpeed(speed: Float) = withController { it.setPlaybackSpeed(speed) }
 
     /** 一键清空播放队列:同时停止播放(mini 条随 currentMediaId 置空消失);自增 session 中止在跑的补全。 */
     fun clearQueue() = withController {

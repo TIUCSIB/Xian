@@ -39,9 +39,11 @@ import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.Cookie
 import androidx.compose.material.icons.rounded.Download
@@ -116,12 +118,10 @@ import kotlin.math.sin
 fun LibraryScreen(
     onLogin: () -> Unit,
     onOpenDownloads: () -> Unit,
-    /** 睡眠定时剩余分钟(null=未启用),状态在 MainViewModel。 */
+    /** 播放设置子页(音质/历史上限/倍速/睡眠定时/热评展示收纳处,2026-10-15 起)。 */
+    onOpenPlaybackSettings: () -> Unit,
+    /** 睡眠定时剩余分钟(null=未启用),状态在 MainViewModel;入口行摘要用。 */
     sleepMinutesLeft: Int?,
-    onSetSleepTimer: (Int) -> Unit,
-    /** 热评展示:0=弹幕 1=列表抽屉;-1=关(状态在 SettingsStore,经 AvSongApp 传入)。 */
-    hotReplyMode: Int,
-    onHotReplyModeChange: (Int) -> Unit,
 ) {
     val loginVm = rememberLoginViewModel()
     val loginState by loginVm.state.collectAsState()
@@ -134,9 +134,6 @@ fun LibraryScreen(
     var showLoginDialog by remember { mutableStateOf(false) }
     var cacheToast by remember { mutableStateOf<String?>(null) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
-    // 睡眠定时自定义输入(1–720 分钟)
-    var showSleepCustomDialog by remember { mutableStateOf(false) }
-    var sleepCustomText by remember { mutableStateOf("") }
     var cacheBytes by remember { mutableStateOf<Long?>(null) }
     var cacheRefreshTick by remember { mutableStateOf(0) }
     val loggedIn = loginState as? LoginUiState.LoggedIn
@@ -173,23 +170,14 @@ fun LibraryScreen(
             onOpenTheme = { showThemeSheet = true },
         )
         AccountHeader(loginState, onLogin = { showLoginDialog = true })
-        // 只有设置卡滚动(用户反馈:账户头不该跟着动);weight(1f) 吃掉剩余高度,
-        // 内容超出时在卡片区域内滚,迷你条/底栏不会遮住滚出的内容
+        // 只有设置区滚动兜底;weight(1f) 吃掉剩余高度(迷你条/底栏不遮内容)
         Column(
             Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState()),
         ) {
             SettingsCard(
-                quality = settings.quality,
-                onQualityChange = { app.settingsStore.setQuality(it) },
-                historyLimit = settings.historyLimit,
-                onHistoryChange = { app.settingsStore.setHistoryLimit(it) },
-                sleepMinutesLeft = sleepMinutesLeft,
-                onSetSleepTimer = onSetSleepTimer,
-                onCustomSleep = { showSleepCustomDialog = true },
-                hotReplyMode = hotReplyMode,
-                onHotReplyModeChange = onHotReplyModeChange,
+                onOpenPlaybackSettings = onOpenPlaybackSettings,
                 downloadedCount = downloadedTracks.size,
                 onOpenDownloads = onOpenDownloads,
                 cacheLabel = cacheBytes?.let { formatCacheSize(it) },
@@ -201,52 +189,7 @@ fun LibraryScreen(
         }
     }
 
-    // 睡眠定时自定义分钟数:数字键盘,1–720 校验(超出给行内错误提示)
-    if (showSleepCustomDialog) {
-        val v = sleepCustomText.toIntOrNull()
-        val invalid = v == null || v !in 1..720
-        AlertDialog(
-            onDismissRequest = { showSleepCustomDialog = false },
-            title = { Text("自定义睡眠定时") },
-            text = {
-                Column {
-                    Text(
-                        "播放到设定时长后自动暂停(1–720 分钟)。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = sleepCustomText,
-                        onValueChange = { sleepCustomText = it.filter { c -> c.isDigit() }.take(3) },
-                        singleLine = true,
-                        isError = sleepCustomText.isNotEmpty() && invalid,
-                        supportingText = {
-                            if (sleepCustomText.isNotEmpty() && invalid) {
-                                Text("请输入 1–720 之间的整数", color = MaterialTheme.colorScheme.error)
-                            }
-                        },
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
-                        ),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !invalid,
-                    onClick = {
-                        showSleepCustomDialog = false
-                        v?.let { onSetSleepTimer(it) }
-                        sleepCustomText = ""
-                    },
-                ) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSleepCustomDialog = false }) { Text("取消") }
-            },
-        )
-    }
+    // 睡眠定时自定义分钟数输入已随播放设置整体迁到 PlaybackSettingsScreen(2026-10-15)
 
     // 退出登录确认:退出后需重新扫码,防误触
     if (showLogoutConfirm) {
@@ -405,23 +348,14 @@ private fun formatCacheSize(bytes: Long): String = when {
 }
 
 /**
- * 设置区:三张卡片——播放(默认音质/播放历史上限)、主题(主题色)、缓存(缓存大小/清理)。
- * 音质/历史上限是短单选,点击**就地展开**选项(2026-10-13 用户反馈:每行都弹底部抽屉显得怪);
- * 主题色仍走 ModalBottomSheet(色板+色相轮盘是视觉选择器,且弹层不自动关便于逐色预览);
- * 缓存清理直接执行。
+ * 设置区(2026-10-15 重新规划,用户要求按功能归纳、本页不超出一屏滚动):
+ * ①「播放设置」入口行(音质/历史上限/倍速/睡眠定时/热评展示全部收进子页,行尾显示摘要);
+ * ② 存储组(已下载入口 + 清理缓存);
+ * ③ 账号组(退出登录,仅登录时)。
  */
 @Composable
 private fun SettingsCard(
-    quality: SettingsStore.Quality,
-    onQualityChange: (SettingsStore.Quality) -> Unit,
-    historyLimit: Int,
-    onHistoryChange: (Int) -> Unit,
-    sleepMinutesLeft: Int?,
-    onSetSleepTimer: (Int) -> Unit,
-    onCustomSleep: () -> Unit,
-    /** 热评展示:0=弹幕 1=列表抽屉;-1=关。 */
-    hotReplyMode: Int,
-    onHotReplyModeChange: (Int) -> Unit,
+    onOpenPlaybackSettings: () -> Unit,
     downloadedCount: Int,
     onOpenDownloads: () -> Unit,
     cacheLabel: String?,
@@ -429,122 +363,20 @@ private fun SettingsCard(
     showLogout: Boolean,
     onLogout: () -> Unit,
 ) {
-    // 同一时间只展开一项(两项同开卡片会很长)
-    var expanded by remember { mutableStateOf<String?>(null) }
-
     Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        // 播放组
+        // 播放设置入口:行尾摘要显示核心偏好当前值(点进去逐项调整)
         Column(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
         ) {
-            SettingsExpandableItem(
-                icon = Icons.Rounded.GraphicEq,
-                title = "默认音质",
-                value = quality.label,
-                expanded = expanded == "quality",
-                onToggle = { expanded = if (expanded == "quality") null else "quality" },
-            ) {
-                SettingsStore.Quality.entries.forEach { q ->
-                    SettingsOptionRow(
-                        label = q.label + if (q == SettingsStore.Quality.LOSSLESS) "(需大会员)" else "",
-                        selected = q == quality,
-                        onClick = {
-                            onQualityChange(q)
-                            expanded = null
-                        },
-                    )
-                }
-            }
-            SettingsExpandableItem(
-                icon = Icons.Rounded.History,
-                title = "播放历史上限",
-                value = if (historyLimit == 0) "不限" else "$historyLimit 首",
-                expanded = expanded == "history",
-                onToggle = { expanded = if (expanded == "history") null else "history" },
-            ) {
-                listOf(20, 50, 100, 0).forEach { n ->
-                    SettingsOptionRow(
-                        label = if (n == 0) "不限" else "$n 首",
-                        selected = n == historyLimit,
-                        onClick = {
-                            onHistoryChange(n)
-                            expanded = null
-                        },
-                    )
-                }
-            }
-            // 睡眠定时:全局功能放设置卡(用户反馈:不该放播放页);到点暂停播放,不持久化
-            SettingsExpandableItem(
-                icon = Icons.Rounded.Bedtime,
-                title = "睡眠定时",
-                value = when {
-                    sleepMinutesLeft == null -> "关"
-                    sleepMinutesLeft < 60 -> "${sleepMinutesLeft} 分钟"
-                    sleepMinutesLeft % 60 == 0 -> "${sleepMinutesLeft / 60} 小时"
-                    else -> "${sleepMinutesLeft / 60} 小时 ${sleepMinutesLeft % 60} 分钟"
-                },
-                expanded = expanded == "sleep",
-                onToggle = { expanded = if (expanded == "sleep") null else "sleep" },
-            ) {
-                if (sleepMinutesLeft != null) {
-                    SettingsOptionRow(label = "关闭定时", selected = false, onClick = {
-                        onSetSleepTimer(0)
-                        expanded = null
-                    })
-                }
-                listOf(15, 30, 60, 90).forEach { min ->
-                    SettingsOptionRow(
-                        label = when {
-                            min < 60 -> "$min 分钟"
-                            min % 60 == 0 -> "${min / 60} 小时"
-                            else -> "${min / 60} 小时 ${min % 60} 分钟"
-                        },
-                        selected = sleepMinutesLeft == min,
-                        onClick = {
-                            onSetSleepTimer(min)
-                            expanded = null
-                        },
-                    )
-                }
-                // 自定义分钟数:当前值不是预设档时显示选中(回显当前值)
-                SettingsOptionRow(
-                    label = if (sleepMinutesLeft != null && sleepMinutesLeft !in listOf(15, 30, 60, 90))
-                        "自定义(${sleepMinutesLeft} 分钟)" else "自定义…",
-                    selected = sleepMinutesLeft != null && sleepMinutesLeft !in listOf(15, 30, 60, 90),
-                    onClick = {
-                        onCustomSleep()
-                        expanded = null
-                    },
-                )
-            }
-            // 热评展示方式:弹幕(播放页飘动)/列表(底部抽屉 3/4 屏)/关;播放页顶栏开关控制开/关
-            SettingsExpandableItem(
-                icon = Icons.Rounded.Subtitles,
-                title = "热评展示",
-                value = when (hotReplyMode) {
-                    0 -> "弹幕"
-                    1 -> "列表"
-                    else -> "关"
-                },
-                expanded = expanded == "hotreply",
-                onToggle = { expanded = if (expanded == "hotreply") null else "hotreply" },
-            ) {
-                SettingsOptionRow(label = "弹幕(播放页飘动)", selected = hotReplyMode == 0, onClick = {
-                    onHotReplyModeChange(0)
-                    expanded = null
-                })
-                SettingsOptionRow(label = "列表(底部抽屉)", selected = hotReplyMode == 1, onClick = {
-                    onHotReplyModeChange(1)
-                    expanded = null
-                })
-                SettingsOptionRow(label = "关闭", selected = hotReplyMode == -1, onClick = {
-                    onHotReplyModeChange(-1)
-                    expanded = null
-                })
-            }
+            SettingsItem(
+                icon = Icons.Rounded.Tune,
+                title = "播放设置",
+                value = null,
+                onClick = onOpenPlaybackSettings,
+            )
         }
         // 存储组:已下载(离线曲库入口)+ 清理缓存(行尾显示当前图片缓存大小)
         Column(
@@ -586,82 +418,6 @@ private fun SettingsCard(
     }
 }
 
-/**
- * 可展开设置行:点击整行就地展开/收起选项(不弹层);箭头折叠朝下、展开转 180°。
- * 折叠态右侧显示当前值;展开的选项缩进 52dp 对齐标题(16 内边距 + 22 图标 + 14 间隔)。
- */
-@Composable
-private fun SettingsExpandableItem(
-    icon: ImageVector,
-    title: String,
-    value: String,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    options: @Composable () -> Unit,
-) {
-    val arrowRotation by animateFloatAsState(if (expanded) 180f else 0f, label = "settingsArrow")
-    Column {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onToggle)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(14.dp))
-            Text(
-                title,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                value,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(4.dp))
-            Icon(
-                Icons.Rounded.KeyboardArrowDown,
-                contentDescription = if (expanded) "收起" else "展开",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.rotate(arrowRotation),
-            )
-        }
-        AnimatedVisibility(visible = expanded, enter = expandVertically(), exit = shrinkVertically()) {
-            Column(Modifier.padding(bottom = 6.dp)) { options() }
-        }
-    }
-}
-
-/** 展开后的选项行:选中 = primary 加粗 + 勾(与行尾箭头同列,视觉对齐)。 */
-@Composable
-private fun SettingsOptionRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(start = 52.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f),
-        )
-        if (selected) {
-            Icon(Icons.Filled.Check, contentDescription = "当前", tint = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
 /** 设置行:左裸图标 + 标题 + 当前值 + 右箭头。destructive=危险操作(退出登录),图标/文字走 error 色。 */
 @Composable
 private fun SettingsItem(
@@ -690,13 +446,18 @@ private fun SettingsItem(
             title,
             style = MaterialTheme.typography.titleMedium,
             color = fg,
+            // 标题恒占剩余宽度(单行省略):值/箭头恒靠行尾;长标题被压时省略而不是换行(竖排踩过)
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
         if (value != null) {
+            Spacer(Modifier.width(8.dp))
             Text(
                 value,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
             Spacer(Modifier.width(4.dp))
         }

@@ -2,6 +2,11 @@ package dev.avsong.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -63,7 +68,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import android.widget.Toast
+
 import androidx.media3.common.Player
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -85,6 +90,7 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.runtime.remember
 import dev.avsong.ui.common.SongList
 import dev.avsong.ui.common.StateHint
+import dev.avsong.ui.common.ThemedNoticeHost
 import dev.avsong.ui.downloads.DownloadedScreen
 import dev.avsong.ui.queue.QueueContent
 import dev.avsong.ui.search.SearchScreen
@@ -98,6 +104,7 @@ object Routes {
     const val FOLDER = "library/folder/{folderId}?title={title}"
     const val COLLECTION = "library/collection/{mid}/{seasonId}?title={title}"
     const val DOWNLOADED = "library/downloaded"
+    const val PLAYBACK_SETTINGS = "library/playback-settings"
 
     fun folder(id: Long, title: String): String =
         "library/folder/$id?title=${android.net.Uri.encode(title)}"
@@ -117,8 +124,11 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
     val currentRoute = backStackEntry?.destination?.route
     val currentTab = routeToTab(currentRoute)
 
+    val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as dev.avsong.AvSongApp
     val snackbarHostState = remember { SnackbarHostState() }
     var showFavoritePicker by remember { mutableStateOf(false) }
+    // 列表行长按「收藏」的目标曲(非空时弹 FavoritePickerDialog);迷你条收藏用当前曲
+    var favoriteTargetBvid by remember { mutableStateOf<String?>(null) }
     // 迷你条的队列入口:底部抽屉(队列页已删,播放队列只在此抽屉展示)
     var showQueueSheet by remember { mutableStateOf(false) }
     // 播放详情:与队列抽屉同款的底部上滑面板(非导航页,用户要求)
@@ -126,6 +136,11 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
     // 抽屉内双 tab:0=当前播放 1=历史播放(打开时保持上次选中的 tab)
     var queueTab by remember { mutableStateOf(0) }
     val playHistory by viewModel.playHistory.collectAsState()
+    // 睡眠定时剩余分钟(null=未启用);播放页顶栏图标显示
+    val sleepMinutesLeft by viewModel.sleepMinutesLeft.collectAsState()
+    // 热评展示设置(弹幕/列表/关);数据由 PlayerScreen 点热评键时按需拉取(进页不自动拉)
+    val danmakuSettings by app.settingsStore.state.collectAsState()
+    val speedSettings by app.settingsStore.state.collectAsState()
 
     // 播放错误 → Snackbar(带重试动作)
     LaunchedEffect(state.player.error) {
@@ -143,32 +158,30 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
         showPlayerSheet = false
     }
 
-    // 下载反馈:Toast(系统窗口,盖在抽屉上面;Snackbar 会被抽屉窗口挡住)
-    val downloadMsg by viewModel.downloadMessage.collectAsState()
+    // 下载/队列插入反馈:主题化应用内提示条(系统 Toast 带机器人图标且配色固定,与主题脱节,用户点名换掉)。
+    // 两路消息共用一个 Host,同时到达时显示最新的那条(消费即置空,StateFlow 末值天然是"最新")。
     val appContext = LocalContext.current.applicationContext
-    LaunchedEffect(downloadMsg) {
-        downloadMsg?.let {
-            Toast.makeText(appContext, it, Toast.LENGTH_SHORT).show()
-            viewModel.consumeDownloadMessage()
-        }
-    }
-
-    // 队列插入反馈(下一首播放/加入队列):同下载反馈走 Toast
+    val downloadMsg by viewModel.downloadMessage.collectAsState()
     val queueNotice by viewModel.queueNotice.collectAsState()
-    LaunchedEffect(queueNotice) {
-        queueNotice?.let {
-            Toast.makeText(appContext, it, Toast.LENGTH_SHORT).show()
-            viewModel.consumeQueueNotice()
-        }
-    }
+    val notice = queueNotice ?: downloadMsg
+    ThemedNoticeHost(
+        message = notice,
+        onConsumed = {
+            if (queueNotice != null) viewModel.consumeQueueNotice()
+            else viewModel.consumeDownloadMessage()
+        },
+    )
 
     if (showFavoritePicker) {
-        val bvid = state.player.currentMediaId ?: ""
+        val bvid = favoriteTargetBvid ?: state.player.currentMediaId ?: ""
         if (bvid.isNotBlank()) {
             FavoritePickerDialog(
                 favRepo = viewModel.favoriteRepository,
                 bvid = bvid,
-                onDismiss = { showFavoritePicker = false },
+                onDismiss = {
+                    showFavoritePicker = false
+                    favoriteTargetBvid = null
+                },
             )
         }
     }
@@ -359,6 +372,13 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
             NavHost(
                 navController = navController,
                 startDestination = Routes.HOME,
+                // 页面切换过渡:200ms 淡入 + 12dp 上移,替代硬切(用户 2026-10-14 采纳优化清单)
+                enterTransition = {
+                    fadeIn(tween(200)) + slideInVertically(tween(200)) { it / 12 }
+                },
+                exitTransition = { fadeOut(tween(200)) },
+                popEnterTransition = { fadeIn(tween(200)) + slideInVertically(tween(200)) { it / 12 } },
+                popExitTransition = { fadeOut(tween(200)) + slideOutVertically(tween(200)) { it / 12 } },
             ) {
                 composable(Routes.HOME) {
                     HomeScreen(
@@ -370,6 +390,11 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onLogin = { navController.navigate(Routes.LOGIN) },
                         onPlayNext = viewModel::playNext,
                         onAddToQueue = viewModel::addToQueue,
+                        onFavorite = { song ->
+                            favoriteTargetBvid = song.bvid
+                            showFavoritePicker = true
+                        },
+                        onDownload = { song -> viewModel.downloadSong(appContext, song) },
                         // 定位当前播放:整榜下标 - 3(列表是整榜 drop(3)),第 4 首落到列表第 0 行
                         onLocate = { viewModel.locateInHome()?.let { idx -> (idx - 3).coerceAtLeast(0) } },
                     )
@@ -382,6 +407,11 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         // 搜索结果点歌:插到当前曲后立即播,不替换队列(用户指定;长按菜单另有无损插入)
                         onPlay = { songs, index -> viewModel.playNow(songs[index]) },
                         onLoadMore = viewModel::loadMoreSearch,
+                        suggests = viewModel.suggests.collectAsState().value,
+                        onSuggestClick = { term ->
+                            viewModel.onQueryChange(term)
+                            viewModel.search()
+                        },
                         onHistoryClick = viewModel::searchFromHistory,
                         onHistoryRemove = viewModel::removeHistory,
                         onHistoryClear = viewModel::clearHistory,
@@ -405,7 +435,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         },
                         onPlayPause = viewModel::playPause,
                         player = state.player,
-                        playingId = viewModel.playingPlaylistId(),
+                        playingId = viewModel.playingPlaylistId(state.player),
                         onLogin = { navController.navigate(Routes.LOGIN) },
                     )
                 }
@@ -413,6 +443,32 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                     LibraryScreen(
                         onLogin = { navController.navigate(Routes.LOGIN) },
                         onOpenDownloads = { navController.navigate(Routes.DOWNLOADED) },
+                        onOpenPlaybackSettings = { navController.navigate(Routes.PLAYBACK_SETTINGS) },
+                        sleepMinutesLeft = sleepMinutesLeft,
+                    )
+                }
+                composable(Routes.PLAYBACK_SETTINGS) {
+                    // 播放设置子页:五项播放偏好收纳处(「我的」页只留入口行,2026-10-15)
+                    dev.avsong.ui.settings.PlaybackSettingsScreen(
+                        quality = speedSettings.let { app.settingsStore.state.value.quality },
+                        onQualityChange = { app.settingsStore.setQuality(it) },
+                        historyLimit = app.settingsStore.state.value.historyLimit,
+                        onHistoryChange = { app.settingsStore.setHistoryLimit(it) },
+                        playbackSpeed = speedSettings.playbackSpeed,
+                        onSpeedChange = { speed ->
+                            app.settingsStore.setPlaybackSpeed(speed) { viewModel.setPlaybackSpeed(it) }
+                        },
+                        sleepMinutesLeft = sleepMinutesLeft,
+                        onSetSleepTimer = viewModel::setSleepTimer,
+                        hotReplyMode = if (danmakuSettings.danmakuEnabled) danmakuSettings.danmakuMode else -1,
+                        onHotReplyModeChange = { mode ->
+                            if (mode == -1) app.settingsStore.setDanmakuEnabled(false)
+                            else {
+                                app.settingsStore.setDanmakuEnabled(true)
+                                app.settingsStore.setDanmakuMode(mode)
+                            }
+                        },
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Routes.DOWNLOADED) {
@@ -436,11 +492,17 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         folderId = folderId,
                         folderTitle = title,
                         onBack = { navController.popBackStack() },
-                        onPlay = { songs, index -> viewModel.playQueue(songs, index) },
+                        // 点歌=插到当前曲后立即播,不替换队列(与搜索页一致);播放全部/随机播放仍整队
+                        onPlay = { songs, index -> viewModel.playNow(songs[index]) },
                         onShuffle = { songs -> viewModel.playQueueShuffled(songs) },
                         onPlayNext = viewModel::playNext,
                         onAddToQueue = viewModel::addToQueue,
+                        onFavorite = { song ->
+                            favoriteTargetBvid = song.bvid
+                            showFavoritePicker = true
+                        },
                         onDownload = { song -> viewModel.downloadSong(appContext, song) },
+                        onDownloadAll = { songs -> viewModel.downloadAll(appContext, songs) },
                         currentMediaId = state.player.currentMediaId,
                         isPlaying = state.player.isPlaying,
                     )
@@ -454,11 +516,17 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         seasonId = seasonId,
                         fallbackTitle = title,
                         onBack = { navController.popBackStack() },
-                        onPlay = { songs, index -> viewModel.playQueue(songs, index) },
+                        // 点歌=插到当前曲后立即播,不替换队列(与搜索页一致);播放全部/随机播放仍整队
+                        onPlay = { songs, index -> viewModel.playNow(songs[index]) },
                         onShuffle = { songs -> viewModel.playQueueShuffled(songs) },
                         onPlayNext = viewModel::playNext,
                         onAddToQueue = viewModel::addToQueue,
+                        onFavorite = { song ->
+                            favoriteTargetBvid = song.bvid
+                            showFavoritePicker = true
+                        },
                         onDownload = { song -> viewModel.downloadSong(appContext, song) },
+                        onDownloadAll = { songs -> viewModel.downloadAll(appContext, songs) },
                         currentMediaId = state.player.currentMediaId,
                         isPlaying = state.player.isPlaying,
                     )
@@ -484,6 +552,8 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                 onNext = viewModel::next,
                 onPrevious = viewModel::previous,
                 onSeek = viewModel::seekTo,
+                danmakuEnabled = app.settingsStore.state.value.danmakuEnabled,
+                danmakuMode = danmakuSettings.danmakuMode,
                 positionProvider = viewModel::currentPosition,
             )
         }

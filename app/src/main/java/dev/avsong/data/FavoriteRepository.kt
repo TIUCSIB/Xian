@@ -184,19 +184,36 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
             )
         }
 
-    /** 某视频已加入哪些收藏夹(fav_state: 1=已收藏 2=私密未收藏 0=未收藏)。 */
+    /** 某视频已加入哪些收藏夹(fav_state: 1=已收藏 2=私密未收藏 0=未收藏)。
+     *  短 TTL 缓存:爱心回显每次切歌都查,快切时同一首会重复请求;写操作后调 [invalidateFavCheck]。 */
+    private var favCheckCache: Triple<Long, List<Long>, Long>? = null // (aid, folders, expiry)
     suspend fun checkFavorite(aid: Long): List<Long> = withContext(Dispatchers.IO) {
+        favCheckCache
+            ?.takeIf { it.first == aid && it.third > System.currentTimeMillis() }
+            ?.let { return@withContext it.second }
         val url = "$api/x/v3/fav/folder/created/list-all?up_mid=$mid&type=2&rid=$aid&biz_type=2"
         val resp = json.decodeFromString<FavFolderListResponse>(get(url))
-        resp.data?.list.orEmpty().filter { it.favState == 1 }.map { it.id }
+        val folders = resp.data?.list.orEmpty().filter { it.favState == 1 }.map { it.id }
+        favCheckCache = Triple(aid, folders, System.currentTimeMillis() + FAV_CHECK_TTL_MS)
+        folders
     }
 
-    /** 收藏操作要 aid;搜索/榜单/收藏夹结果尽量带上,缺失时经 view 补。 */
+    /** 收藏/取消写操作后调用:清掉 checkFavorite 缓存,下次回显走真实请求。 */
+    fun invalidateFavCheck() { favCheckCache = null }
+
+
+    /** 收藏操作要 aid;搜索/榜单/收藏夹结果尽量带上,缺失时经 view 补。
+     *  aid 与视频绑定、不会变:进程内按 bvid 缓存,切歌回显爱心不再每首都打一次 view 接口
+     *  (打不回来的间隙爱心是描边,快速切歌会闪烁);失败(0)不缓存,下次重试。 */
+    private val aidCache = HashMap<String, Long>()
     suspend fun fetchAid(bvid: String): Long = withContext(Dispatchers.IO) {
+        synchronized(aidCache) { aidCache[bvid] }?.let { return@withContext it }
         val url = "$api/x/web-interface/view?bvid=$bvid"
-        runCatching {
+        val aid = runCatching {
             json.decodeFromString<dev.avsong.data.remote.ViewResponse>(get(url)).data?.aid ?: 0L
         }.getOrDefault(0L)
+        if (aid > 0) synchronized(aidCache) { aidCache[bvid] = aid }
+        aid
     }
 
     // ---------- 写 ----------
@@ -249,6 +266,7 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
         )
         val resp = json.decodeFromString<FavWriteResponse>(body)
         if (resp.code != 0) throw IOException("收藏操作失败 code=${resp.code} ${resp.message}")
+        invalidateFavCheck()
     }
 
     // ---------- HTTP ----------
@@ -288,6 +306,9 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
 
         /** collected/list 条目 type:21=合集(追合集),11=收藏夹。 */
         const val TYPE_SEASON = 21
+
+        /** 收藏状态回显缓存的有效期。 */
+        const val FAV_CHECK_TTL_MS = 30_000L
     }
 }
 

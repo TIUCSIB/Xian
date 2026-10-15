@@ -1,6 +1,7 @@
 package dev.avsong.data
 
 import dev.avsong.data.remote.AudioStream
+import dev.avsong.data.remote.SearchSuggestResponse
 import dev.avsong.data.remote.Dash
 import dev.avsong.data.remote.HistoryItem
 import dev.avsong.data.remote.HistoryResponse
@@ -17,6 +18,8 @@ import dev.avsong.data.remote.ViewResponse
 import dev.avsong.domain.NotLoggedInException
 import dev.avsong.domain.PagedResult
 import dev.avsong.domain.Song
+import dev.avsong.domain.SearchDuration
+import dev.avsong.domain.SearchOrder
 import dev.avsong.domain.SongRepository
 import dev.avsong.domain.formatClock
 import kotlinx.coroutines.Dispatchers
@@ -49,15 +52,19 @@ object BiliSongRepository : SongRepository {
 
     // ---------- 挂起接口(UI 层) ----------
 
-    override suspend fun search(keyword: String, page: Int): PagedResult<Song> =
-        withContext(Dispatchers.IO) {
-            val data = searchBlocking(keyword, page)
-            PagedResult(
-                items = data.result.filter { it.bvid.isNotBlank() }.map { it.toSong() },
-                page = page,
-                hasMore = page < data.numPages,
-            )
-        }
+    override suspend fun search(
+        keyword: String,
+        page: Int,
+        order: SearchOrder,
+        duration: SearchDuration,
+    ): PagedResult<Song> = withContext(Dispatchers.IO) {
+        val data = searchBlocking(keyword, page, order, duration)
+        PagedResult(
+            items = data.result.filter { it.bvid.isNotBlank() }.map { it.toSong() },
+            page = page,
+            hasMore = page < data.numPages,
+        )
+    }
 
     /** 粘贴 BV 号 / av 号 / 分享链接 → 直接解析成单首(不走搜索接口)。 */
     override suspend fun resolveDirect(query: String): Song? = withContext(Dispatchers.IO) {
@@ -65,6 +72,21 @@ object BiliSongRepository : SongRepository {
             ?: Regex("av(\\d+)", RegexOption.IGNORE_CASE).find(query)?.groupValues?.get(1)?.let { avToBvidBlocking(it) }
             ?: return@withContext null
         runCatching { viewToSongBlocking(bvid) }.getOrNull()
+    }
+
+    /**
+     * 搜索联想词(s.search.bilibili.com/main/suggest,匿名可用)。
+     * 失败返回空列表(联想是锦上添花,绝不能打断主搜索)。
+     */
+    override suspend fun suggest(keyword: String): List<String> = withContext(Dispatchers.IO) {
+        if (keyword.isBlank()) return@withContext emptyList()
+        runCatching {
+            val url = "https://s.search.bilibili.com/main/suggest?main_ver=v1&term=" +
+                java.net.URLEncoder.encode(keyword.trim(), "UTF-8")
+            val resp = getJson(url, referer = BiliConstants.REFERER)
+            json.decodeFromString<SearchSuggestResponse>(resp)
+                .result?.tag?.map { it.value }?.filter { it.isNotBlank() }.orEmpty()
+        }.getOrDefault(emptyList())
     }
 
     private fun avToBvidBlocking(av: String): String? = runCatching {
@@ -249,14 +271,25 @@ object BiliSongRepository : SongRepository {
     // ---------- 搜索 / 榜单 ----------
 
     @Throws(IOException::class)
-    private fun searchBlocking(keyword: String, page: Int): dev.avsong.data.remote.SearchData {
+    private fun searchBlocking(
+        keyword: String,
+        page: Int,
+        order: SearchOrder = SearchOrder.COMPREHENSIVE,
+        duration: SearchDuration = SearchDuration.ANY,
+    ): dev.avsong.data.remote.SearchData {
         ensureBuvid()
+        // order/duration 是 B 站网页搜索的排序与时长筛参数,实测匿名带 buvid 可用:
+        // order: click=最多播放 pubdate=最新发布;duration: 1<10min 2=10-30min 3=30-60min 4>60min
         val url = (baseUrl + "/x/web-interface/search/type").toHttpUrl().newBuilder()
             .addQueryParameter("search_type", "video")
             .addQueryParameter("keyword", keyword)
             .addQueryParameter("page", page.toString())
             .addQueryParameter("page_size", "30")
             .addQueryParameter("platform", "pc")
+            .apply {
+                if (order.apiValue.isNotEmpty()) addQueryParameter("order", order.apiValue)
+                if (duration.apiValue.isNotEmpty()) addQueryParameter("duration", duration.apiValue)
+            }
             .build()
         val resp = getJson(url.toString(), referer = "https://search.bilibili.com/")
         return json.decodeFromString<SearchResponse>(resp).data ?: throw IOException("搜索返回空数据")
