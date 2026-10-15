@@ -48,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,9 +87,16 @@ fun PlaylistScreen(
     onPlayCollection: (SavedCollection) -> Unit,
     onPlayPause: () -> Unit,
     player: PlayerState,
-    /** 正在播的歌单 id("folder:<id>"/"collection:<seasonId>");null=没有歌单在播。 */
+    /** 正在播的歌单 id("folder:<id>"/"collection:<seasonId>"/"local:<id>");null=没有歌单在播。 */
     playingId: String?,
     onLogin: () -> Unit,
+    /** 本地自建歌单(2026-10-15 加):数据经 MainViewModel.localPlaylistStore,动作用 MainViewModel。 */
+    localPlaylists: List<dev.avsong.data.LocalPlaylist> = emptyList(),
+    onCreateLocalPlaylist: (String) -> Unit = {},
+    onDeleteLocalPlaylist: (dev.avsong.data.LocalPlaylist) -> Unit = {},
+    onRenameLocalPlaylist: (dev.avsong.data.LocalPlaylist, String) -> Unit = { _, _ -> },
+    onOpenLocalPlaylist: (dev.avsong.data.LocalPlaylist) -> Unit = {},
+    onPlayLocalPlaylist: (dev.avsong.data.LocalPlaylist) -> Unit = {},
 ) {
     val vm = rememberLibraryViewModel()
     val state by vm.state.collectAsState()
@@ -98,6 +106,10 @@ fun PlaylistScreen(
     var showAddCollection by remember { mutableStateOf(false) }
     // 长按菜单选中的动作 → 确认弹窗(破坏性操作不直接执行)
     var pendingDelete by remember { mutableStateOf<FavoriteRepository.Folder?>(null) }
+    // 本地歌单:新建对话框 / 待删除(确认)/ 待重命名(输入)
+    var showCreateLocal by remember { mutableStateOf(false) }
+    var pendingDeleteLocal by remember { mutableStateOf<dev.avsong.data.LocalPlaylist?>(null) }
+    var pendingRenameLocal by remember { mutableStateOf<dev.avsong.data.LocalPlaylist?>(null) }
     // 返回本页时同步状态:详情页里取消订阅/删除后,卡片要立刻消失(首载由 VM init 负责,不重复请求)
     LaunchedEffect(Unit) { vm.refreshIfLoaded() }
     var pendingUnsub by remember { mutableStateOf<SavedCollection?>(null) }
@@ -136,6 +148,43 @@ fun PlaylistScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
+                // 本地自建歌单(2026-10-15 加,放最顶上):纯本地数据,不依赖登录/网络。
+                // 封面 = 首曲 coverUrl 兜底(与收藏夹详情同款);徽标 = 曲目数
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 6.dp, end = 2.dp, top = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "本地歌单 (${localPlaylists.size})",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        IconButton(onClick = { showCreateLocal = true }) {
+                            Icon(Icons.Filled.Add, contentDescription = "新建本地歌单")
+                        }
+                    }
+                }
+                items(localPlaylists, key = { "local-${it.id}" }) { pl ->
+                    PlaylistCard(
+                        title = pl.name,
+                        cover = pl.tracks.firstOrNull()?.coverUrl,
+                        count = pl.tracks.size,
+                        onOpen = { onOpenLocalPlaylist(pl) },
+                        onPlay = { onPlayLocalPlaylist(pl) },
+                        onPause = onPlayPause,
+                        isCurrent = playingId == "local:${pl.id}",
+                        isPlaying = player.isPlaying,
+                        menuActions = listOf(
+                            "重命名歌单" to { pendingRenameLocal = pl },
+                            "删除歌单" to { pendingDeleteLocal = pl },
+                        ),
+                    )
+                }
+
                 // UP 主合集:本地订阅(粘链接添加)+ B 站「我追的合集」自动同步
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Row(
@@ -365,6 +414,41 @@ fun PlaylistScreen(
             dismissButton = { TextButton(onClick = { pendingUnsub = null }) { Text("再想想") } },
         )
     }
+
+    // ---- 本地自建歌单(2026-10-15)----
+    if (showCreateLocal) {
+        CreateLocalPlaylistDialog(
+            onDismiss = { showCreateLocal = false },
+            onCreate = { name ->
+                onCreateLocalPlaylist(name)
+                showCreateLocal = false
+            },
+        )
+    }
+    pendingDeleteLocal?.let { pl ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteLocal = null },
+            title = { Text("删除歌单?") },
+            text = { Text("「${pl.name}」及其中的 ${pl.tracks.size} 首歌会被移除,只删本地歌单,不影响 B 站收藏,操作不可撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteLocalPlaylist(pl)
+                    pendingDeleteLocal = null
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { pendingDeleteLocal = null }) { Text("取消") } },
+        )
+    }
+    pendingRenameLocal?.let { pl ->
+        RenamePlaylistDialog(
+            initial = pl.name,
+            onDismiss = { pendingRenameLocal = null },
+            onConfirm = { name ->
+                onRenameLocalPlaylist(pl, name)
+                pendingRenameLocal = null
+            },
+        )
+    }
 }
 
 /** 分区小标题(我创建的/收藏的),整行占满。 */
@@ -540,6 +624,65 @@ private fun formatPlaylistCount(count: Int): String {
     if (count < 10000) return count.toString()
     val dec = (count / 1000).toDouble() / 10.0
     return if (dec % 1.0 == 0.0) "${dec.toInt()}万" else "${dec}万"
+}
+
+/**
+ * 新建本地歌单对话框:只要一个名称(简介/公开开关是 B 站概念,本地不需要)。
+ */
+@Composable
+private fun CreateLocalPlaylistDialog(
+    onDismiss: () -> Unit,
+    onCreate: (String) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("新建歌单") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                placeholder = { Text("歌单名称") },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (name.isNotBlank()) onCreate(name.trim()) },
+                enabled = name.isNotBlank(),
+            ) { Text("创建") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+/** 重命名本地歌单对话框(歌单页长按与详情页 ⋮ 菜单共用)。 */
+@Composable
+internal fun RenamePlaylistDialog(
+    initial: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("重命名歌单") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                placeholder = { Text("歌单名称") },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (name.isNotBlank() && name.trim() != initial) onConfirm(name.trim()) },
+                enabled = name.isNotBlank() && name.trim() != initial,
+            ) { Text("确定") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable

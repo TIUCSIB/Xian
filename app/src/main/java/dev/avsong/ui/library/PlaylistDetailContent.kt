@@ -101,6 +101,8 @@ fun PlaylistDetailContent(
     onFavorite: (Song) -> Unit,
     onDownload: (Song) -> Unit,
     onRemoveSong: ((Song) -> Unit)? = null,
+    /** 移除项文案(收藏夹=「从收藏夹移除」,本地歌单=「从歌单移除」)。 */
+    removeSongLabel: String = "从收藏夹移除",
     /** 歌单内搜索:打开搜索时触发「加载全部」(大合集要搜得到就得全量),进度经 [loadingAll]。 */
     loadingAll: Boolean = false,
     onLoadAll: () -> Unit = {},
@@ -213,6 +215,7 @@ fun PlaylistDetailContent(
                 onFavorite = onFavorite,
                 onDownload = onDownload,
                 onRemove = onRemoveSong,
+                removeSongLabel = removeSongLabel,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
 
@@ -272,6 +275,7 @@ fun PlaylistDetailContent(
                             onFavorite = onFavorite,
                             onDownload = onDownload,
                             onRemove = onRemoveSong,
+                            removeSongLabel = removeSongLabel,
                         )
                     }
                     if (loadingMore) {
@@ -454,6 +458,7 @@ private fun NumberedSongRow(
     onFavorite: (Song) -> Unit,
     onDownload: (Song) -> Unit,
     onRemove: ((Song) -> Unit)?,
+    removeSongLabel: String = "从收藏夹移除",
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     Row(
@@ -555,7 +560,7 @@ private fun NumberedSongRow(
                 )
                 if (onRemove != null) {
                     DropdownMenuItem(
-                        text = { Text("从收藏夹移除") },
+                        text = { Text(removeSongLabel) },
                         onClick = {
                             onRemove(song)
                             menuExpanded = false
@@ -634,6 +639,7 @@ private fun SearchResults(
     onFavorite: (Song) -> Unit,
     onDownload: (Song) -> Unit,
     onRemove: ((Song) -> Unit)?,
+    removeSongLabel: String = "从收藏夹移除",
     modifier: Modifier = Modifier,
 ) {
     val filtered = if (query.isBlank()) songs else songs.filter {
@@ -684,6 +690,7 @@ private fun SearchResults(
                         onFavorite = onFavorite,
                         onDownload = onDownload,
                         onRemove = onRemove,
+                        removeSongLabel = removeSongLabel,
                     )
                 }
             }

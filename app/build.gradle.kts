@@ -15,6 +15,10 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        // 版本信息注入 BuildConfig(「关于」页展示/检查更新比对用,一处改两处生效)
+        buildConfigField("String", "VERSION_NAME", "\"${versionName}\"")
+        buildConfigField("String", "PROJECT_URL", "\"https://github.com/TIUCSIB/Xian\"")
+        buildConfigField("String", "APP_NAME", "\"弦 Xian\"")
     }
 
     buildTypes {
@@ -29,6 +33,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

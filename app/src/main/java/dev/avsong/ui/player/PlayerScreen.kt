@@ -82,6 +82,7 @@ import dev.avsong.domain.formatClock
 import dev.avsong.player.PlayerState
 import dev.avsong.ui.LyricUiState
 import dev.avsong.ui.library.FavoritePickerDialog
+import dev.avsong.ui.common.ThemedNoticeHost
 import kotlinx.coroutines.delay
 import kotlin.math.roundToLong
 
@@ -103,6 +104,12 @@ fun PlayerScreen(
     onPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
     onCycleMode: () -> Unit,
+    /** 收藏弹窗的本地歌单区(2026-10-15 加):null=不渲染该区。 */
+    localPlaylists: List<dev.avsong.data.LocalPlaylist>? = null,
+    /** 勾选/取消本地歌单(checked=当前是否已在);当前曲快照由本页从 state 组装。 */
+    onToggleLocal: ((dev.avsong.data.LocalPlaylist, Boolean) -> Unit)? = null,
+    /** 本地歌单区就地新建。 */
+    onCreateLocal: ((String) -> Unit)? = null,
     /** 热评展示:danmakuEnabled 开关 + danmakuMode(0=弹幕,1=列表抽屉);数据由本页按需拉取。 */
     danmakuEnabled: Boolean = true,
     danmakuMode: Int = 0,
@@ -537,10 +544,23 @@ fun PlayerScreen(
         if (showFavPicker) {
             val bvid = state.currentMediaId ?: ""
             if (bvid.isNotBlank()) {
+                // 弹窗结果经局部提示条反馈(播放页是组合内 overlay,AvSongApp 的全局 Host 也盖得住,
+                // 但消息源在 VM 流里,这里就地挂一个最直接)
+                var favNotice by remember { mutableStateOf<String?>(null) }
+                ThemedNoticeHost(message = favNotice, onConsumed = { favNotice = null })
                 FavoritePickerDialog(
                     favRepo = favoriteRepository,
                     bvid = bvid,
                     onDismissWithState = { favChecked = it },
+                    onResult = { favNotice = it },
+                    localPlaylists = localPlaylists,
+                    onToggleLocal = onToggleLocal?.let { toggle ->
+                        { pl, checked ->
+                            // 本地歌单要歌曲快照:当前曲的 PlayerState 字段拼一份(爱心只作用于当前曲)
+                            toggle(pl, checked)
+                        }
+                    },
+                    onCreateLocal = onCreateLocal,
                     onDismiss = { showFavPicker = false },
                 )
             }

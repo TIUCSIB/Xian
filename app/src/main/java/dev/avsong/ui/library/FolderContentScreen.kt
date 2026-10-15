@@ -30,7 +30,7 @@ fun FolderContentScreen(
     onAddToQueue: (Song) -> Unit,
     onFavorite: (Song) -> Unit,
     onDownload: (Song) -> Unit,
-    /** ⋮ 菜单「下载全部」:把已加载的歌曲整批入队(队列自动去重已下载/已在队的)。 */
+    /** ⋮ 菜单「下载全部」：把已加载的歌曲整批入队(队列自动去重已下载/已在队的)。 */
     onDownloadAll: (List<Song>) -> Unit,
     currentMediaId: String?,
     isPlaying: Boolean,
@@ -54,7 +54,11 @@ fun FolderContentScreen(
         onLoadMore = vm::loadMore,
         onBack = onBack,
         // 播放前先拉全量:否则大收藏夹点播放只入列已加载的第一页(20 首);与合集详情同款
-        onPlay = { _, index -> vm.playWithFill(index, onPlay) },
+        onPlay = { _, index ->
+            // 补全进行中的点击不被护栏吞掉(与合集详情同坑):直播所点那一首
+            if (loadingAll) onPlay(listOf(state.songs[index]), 0)
+            else vm.playWithFill(index, onPlay)
+        },
         onShuffle = { loaded -> vm.loadAll { all -> onShuffle(all) } },
         currentMediaId = currentMediaId,
         isPlaying = isPlaying,

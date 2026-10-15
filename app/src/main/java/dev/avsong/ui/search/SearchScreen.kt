@@ -2,8 +2,6 @@ package dev.avsong.ui.search
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -26,12 +24,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.rounded.MusicOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -55,8 +52,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import dev.avsong.domain.Song
-import dev.avsong.domain.SearchOrder
-import dev.avsong.domain.SearchDuration
 import dev.avsong.ui.MainUiState
 import dev.avsong.ui.SearchUiState
 import dev.avsong.ui.common.LoadingHint
@@ -83,8 +78,6 @@ fun SearchScreen(
     onHistoryClear: () -> Unit = {},
     onPlayNext: (Song) -> Unit = {},
     onAddToQueue: (Song) -> Unit = {},
-    onOrderChange: (SearchOrder) -> Unit = {},
-    onDurationChange: (SearchDuration) -> Unit = {},
     onFavorite: (Song) -> Unit = {},
     onDownload: (Song) -> Unit = {},
 ) {
@@ -132,8 +125,8 @@ fun SearchScreen(
 
 
         // 联想浮层:Popup 独立窗口,天然悬浮于一切内容之上(不占布局、不推走历史/结果);
-        // 挂在搜索框正下方。任何状态联想非空即显示。
-        if (state.query.isNotBlank() && suggests.isNotEmpty()) {
+        // 挂在搜索框正下方。仅 Idle 态显示——点搜索/键盘搜索后进入结果,浮层随之消失。
+        if (state.search == SearchUiState.Idle && state.query.isNotBlank() && suggests.isNotEmpty()) {
             Popup(
                 alignment = Alignment.TopStart,
                 offset = with(LocalDensity.current) {
@@ -179,13 +172,32 @@ fun SearchScreen(
                 } else {
                     // BV/av 直达 = 单曲结果,筛选与播放全部都无意义
                     val isDirectHit = search.songs.size == 1 && !search.hasMore
-                    if (!isDirectHit) {
-                        SearchFilterChips(
-                            order = search.order,
-                            duration = search.duration,
-                            onOrderChange = onOrderChange,
-                            onDurationChange = onDurationChange,
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("搜索结果", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                // B 站 numResults 封顶 1000 无真实总数;没到底显示已加载数,到底才说「共」
+                                if (search.hasMore) "已加载 ${search.songs.size} 首" else "共 ${search.songs.size} 首",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        // 点行=插队即播;「播放全部」才整队替换,两种意图各有入口
+                        if (!isDirectHit) {
+                            TextButton(onClick = { onPlay(search.songs, 0) }) {
+                                Icon(
+                                    Icons.Filled.PlayArrow,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("播放全部")
+                            }
+                        }
                     }
                     SongList(
                         songs = search.songs,
@@ -338,69 +350,6 @@ private fun HistoryChips(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-            }
-        }
-    }
-}
-
-/**
- * 搜索筛选 chips 行:排序(综合/最多播放/最新发布)+ 时长(不限/10分钟内/…)。
- * 横向滚动,选中主色描边;改动即触发重搜(经调用方 onOrderChange/onDurationChange)。
- */
-@Composable
-private fun SearchFilterChips(
-    order: SearchOrder,
-    duration: SearchDuration,
-    onOrderChange: (SearchOrder) -> Unit,
-    onDurationChange: (SearchDuration) -> Unit,
-) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            SearchOrder.entries.forEach { o ->
-                FilterChip(
-                    selected = o == order,
-                    onClick = { onOrderChange(o) },
-                    label = { Text(o.label, style = MaterialTheme.typography.labelMedium) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        enabled = true,
-                        selected = o == order,
-                        borderColor = MaterialTheme.colorScheme.outlineVariant,
-                    ),
-                )
-            }
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            SearchDuration.entries.forEach { d ->
-                FilterChip(
-                    selected = d == duration,
-                    onClick = { onDurationChange(d) },
-                    label = { Text(d.label, style = MaterialTheme.typography.labelMedium) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        enabled = true,
-                        selected = d == duration,
-                        borderColor = MaterialTheme.colorScheme.outlineVariant,
-                    ),
-                )
             }
         }
     }

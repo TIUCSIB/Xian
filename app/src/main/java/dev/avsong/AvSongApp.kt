@@ -13,6 +13,7 @@ import dev.avsong.data.CollectionStore
 import dev.avsong.data.DownloadManager
 import dev.avsong.data.DownloadedStore
 import dev.avsong.data.FavoriteRepository
+import dev.avsong.data.LocalPlaylistStore
 import dev.avsong.data.PlayHistoryStore
 import dev.avsong.data.SearchHistoryStore
 import dev.avsong.data.auth.AuthStore
@@ -52,6 +53,9 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
     lateinit var playHistoryStore: PlayHistoryStore
         private set
 
+    lateinit var localPlaylistStore: LocalPlaylistStore
+        private set
+
     lateinit var themeStore: ThemeStore
         private set
 
@@ -71,6 +75,7 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
         downloadedStore = DownloadedStore(this)
         downloadManager = DownloadManager(this)
         playHistoryStore = PlayHistoryStore(this)
+        localPlaylistStore = LocalPlaylistStore(this)
         themeStore = ThemeStore(this)
         dev.avsong.ui.settings.SettingsStore.init(this)
         settingsStore = dev.avsong.ui.settings.SettingsStore
@@ -84,6 +89,8 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
         appScope.launch { collectionStore.load() }
         // 已下载歌曲元数据恢复(自愈剔除文件已不存在的条目;孤儿扫描在下载页打开时做)
         appScope.launch { downloadedStore.load() }
+        // 本地自建歌单恢复(纯 DataStore,不走网络)
+        appScope.launch { localPlaylistStore.load() }
         // 日夜间模式持久化恢复
         appScope.launch { themeStore.load() }
         // 音质/历史上限等设置恢复(仓库层选路直接读它的内存流)

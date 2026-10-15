@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.MusicOff
@@ -145,6 +146,9 @@ fun HomeScreen(
                     state.homeNeedsLogin -> LoginRequiredList(onLogin)
                     state.homeLoading && state.homeSongs.isEmpty() ->
                         LoadingHint("正在加载热歌榜…")
+                    // 加载失败(断网/-412 风控等)区别于空态:明确报错 + 重试按钮(下拉刷新同样可用)
+                    state.homeError != null && state.homeSongs.isEmpty() ->
+                        ErrorHomeList(state.homeError, onRetry = onRefresh)
                     state.homeSongs.isEmpty() -> EmptyHomeList()
                     else -> SongList(
                         songs = state.homeSongs.drop(FEATURED_COUNT),
@@ -456,6 +460,26 @@ private fun LoginRequiredList(onLogin: () -> Unit) {
                     Icons.Rounded.AccountCircle,
                     "最近播放需要登录",
                     "点这里扫码登录,登录后同步你的播放记录",
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 加载失败态(区别于空态):给出服务端/网络的真实错误信息 + 显式重试按钮。
+ * 和其他空态一样必须由可滚动容器承载,否则下拉手势收不到 nested scroll。
+ */
+@Composable
+private fun ErrorHomeList(message: String, onRetry: () -> Unit) {
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            Box(Modifier.fillParentMaxSize()) {
+                StateHint(
+                    Icons.Rounded.CloudOff,
+                    "加载失败",
+                    message.ifBlank { "网络开小差了,请检查连接后重试" },
+                    onRetry = onRetry,
                 )
             }
         }

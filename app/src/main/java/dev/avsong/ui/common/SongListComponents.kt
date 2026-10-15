@@ -9,7 +9,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -437,7 +439,13 @@ fun LoadingHint(text: String) {
 }
 
 @Composable
-fun StateHint(icon: ImageVector, title: String, subtitle: String) {
+fun StateHint(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    /** 非空时在副标题下方渲染「重试」胶囊(加载失败态用;纯空态不给按钮)。 */
+    onRetry: (() -> Unit)? = null,
+) {
     Column(
         Modifier.fillMaxSize().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -461,5 +469,23 @@ fun StateHint(icon: ImageVector, title: String, subtitle: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+        if (onRetry != null) {
+            Spacer(Modifier.height(20.dp))
+            Text(
+                "重试",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.primary)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onRetry,
+                    )
+                    .padding(horizontal = 28.dp, vertical = 10.dp),
+            )
+        }
     }
 }

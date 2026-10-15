@@ -32,7 +32,7 @@ fun CollectionContentScreen(
     onAddToQueue: (Song) -> Unit,
     onFavorite: (Song) -> Unit,
     onDownload: (Song) -> Unit,
-    /** ⋮ 菜单「下载全部」:把已加载的歌曲整批入队(队列自动去重已下载/已在队的)。 */
+    /** ⋮ 菜单「下载全部」：把已加载的歌曲整批入队(队列自动去重已下载/已在队的)。 */
     onDownloadAll: (List<Song>) -> Unit,
     currentMediaId: String?,
     isPlaying: Boolean,
@@ -61,8 +61,14 @@ fun CollectionContentScreen(
         // 搜索期间播过滤子集(直接整队,不走 playWithFill——它的 loadingAll 护栏会
         // 吞掉搜索加载中的点击,且全量列表第 index 首与过滤子集第 index 首对不上,用户实测两 bug)
         onPlay = { playing, index ->
-            if (playing === state.songs) vm.playWithFill(index, onPlay)
-            else onPlay(playing, index)
+            when {
+                playing !== state.songs -> onPlay(playing, index)
+                // 补全进行中的点击不能被 loadingAll 护栏静默吞掉(978 首合集补全要跑几十秒,
+                // 用户实测期间点行没反应):直播所点那一首(playNow:插当前曲后立即播,
+                // 不换队列不动 session,补全循环继续把剩余页灌进同一队列)
+                loadingAll -> onPlay(listOf(state.songs[index]), 0)
+                else -> vm.playWithFill(index, onPlay)
+            }
         },
         onShuffle = { loaded -> vm.loadAll { all -> onShuffle(all) } },
         currentMediaId = currentMediaId,

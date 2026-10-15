@@ -10,8 +10,6 @@ import dev.avsong.AvSongApp
 import dev.avsong.data.lyric.LyricLine
 import dev.avsong.data.lyric.LyricRepository
 import dev.avsong.domain.NotLoggedInException
-import dev.avsong.domain.SearchDuration
-import dev.avsong.domain.SearchOrder
 import dev.avsong.domain.Song
 import dev.avsong.domain.SongRepository
 import dev.avsong.data.BiliSongRepository
@@ -20,6 +18,7 @@ import dev.avsong.player.PlayerState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import dev.avsong.data.BiliConstants
+import dev.avsong.data.toSong
 import dev.avsong.data.BiliHttp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -44,8 +43,6 @@ sealed interface SearchUiState {
         val page: Int = 1,
         val hasMore: Boolean = false,
         val loadingMore: Boolean = false,
-        val order: SearchOrder = SearchOrder.COMPREHENSIVE,
-        val duration: SearchDuration = SearchDuration.ANY,
     ) : SearchUiState
     data class Error(val message: String) : SearchUiState
 }
@@ -89,6 +86,8 @@ class MainViewModel(
     val favoriteRepository: dev.avsong.data.FavoriteRepository,
     private val searchHistoryStore: dev.avsong.data.SearchHistoryStore,
     private val playHistoryStore: dev.avsong.data.PlayHistoryStore,
+    val localPlaylistStore: dev.avsong.data.LocalPlaylistStore,
+    private val downloadedStore: dev.avsong.data.DownloadedStore,
     private val lyricRepository: LyricRepository = LyricRepository(),
 ) : ViewModel() {
 
@@ -351,6 +350,7 @@ class MainViewModel(
         }
         // 作废在途请求:新代次生效,旧响应即使后到也会被代次比对丢弃
         searchJob?.cancel()
+        suggestQuery.value = ""  // 清联想:搜完回到结果页,浮层不该再挂;防回 Idle 时旧词闪现
         val gen = ++searchGeneration
         val prevForLoading = _state.value.search as? SearchUiState.Result
         _state.update { it.copy(search = SearchUiState.Loading(prevForLoading)) }
@@ -366,11 +366,8 @@ class MainViewModel(
                     }
                     return@launch
                 }
-                // 2. 普通搜索第一页(筛选条件从当前 Result 态读取,重搜沿用)
-                val prev = _state.value.search as? SearchUiState.Result
-                val order = prev?.order ?: SearchOrder.COMPREHENSIVE
-                val duration = prev?.duration ?: SearchDuration.ANY
-                val result = repository.search(q, 1, order, duration)
+                // 2. 普通搜索第一页
+                val result = repository.search(q, 1)
                 searchHistoryStore.add(q)
                 if (!stale()) _state.update {
                     it.copy(
@@ -379,8 +376,6 @@ class MainViewModel(
                             keyword = q,
                             page = 1,
                             hasMore = result.hasMore,
-                            order = order,
-                            duration = duration,
                         ),
                     )
                 }
@@ -397,7 +392,7 @@ class MainViewModel(
         viewModelScope.launch {
             _state.update { it.copy(search = cur.copy(loadingMore = true)) }
             try {
-                val next = repository.search(cur.keyword, cur.page + 1, cur.order, cur.duration)
+                val next = repository.search(cur.keyword, cur.page + 1)
                 val merged = (cur.songs + next.items).distinctBy { it.bvid }
                 _state.update {
                     it.copy(
@@ -415,20 +410,6 @@ class MainViewModel(
         }
     }
 
-    /** 搜索筛选(排序/时长):设置后立即用当前关键词重搜。 */
-    fun setSearchOrder(order: SearchOrder) {
-        val cur = _state.value.search as? SearchUiState.Result ?: return
-        if (cur.order == order) return
-        _state.update { it.copy(search = cur.copy(order = order)) }
-        search()
-    }
-
-    fun setSearchDuration(duration: SearchDuration) {
-        val cur = _state.value.search as? SearchUiState.Result ?: return
-        if (cur.duration == duration) return
-        _state.update { it.copy(search = cur.copy(duration = duration)) }
-        search()
-    }
 
     fun removeHistory(term: String) {
         viewModelScope.launch { searchHistoryStore.remove(term) }
@@ -583,6 +564,56 @@ class MainViewModel(
     }
 
     /**
+     * 本地自建歌单(2026-10-15 加):曲目快照全量在内存,无补全循环 ——
+     * markPlayingPlaylist + playQueue 两步,歌单卡片三态高亮(音波条/▶)自动生效。
+     * 已下载的曲子填 file:// 直链:离线也能播(mediaId 仍是 bvid,收藏/歌词照常)。
+     */
+    fun playLocalPlaylist(playlistId: Long) {
+        val pl = localPlaylistStore.playlists.value.firstOrNull { it.id == playlistId }
+        if (pl == null || pl.tracks.isEmpty()) {
+            _queueNotice.value = "这个歌单还是空的"
+            return
+        }
+        val downloaded = downloadedStore.state.value.associateBy { it.bvid }
+        val songs = pl.tracks.map { t ->
+            val track = downloaded[t.bvid]
+            val file = track?.let { downloadedStore.fileOf(it) }?.takeIf { it.exists() }
+            if (file != null) {
+                t.toSong().copy(audioUrl = android.net.Uri.fromFile(file).toString())
+            } else {
+                t.toSong()
+            }
+        }
+        markPlayingPlaylist("local:$playlistId", songs.first())
+        playQueue(songs, 0)
+    }
+
+    /** 新建本地歌单(歌单页「+」与存入弹窗的快捷建夹共用)。 */
+    fun createLocalPlaylist(name: String) {
+        viewModelScope.launch { localPlaylistStore.create(name) }
+    }
+
+    fun renameLocalPlaylist(id: Long, name: String) {
+        viewModelScope.launch { localPlaylistStore.rename(id, name) }
+    }
+
+    fun deleteLocalPlaylist(id: Long) {
+        viewModelScope.launch { localPlaylistStore.delete(id) }
+    }
+
+    /** 存入歌单(详情页行菜单 → 选歌单弹窗)。已在歌单里经 queueNotice 提示,不静默。 */
+    fun saveSongToLocalPlaylist(playlistId: Long, song: Song) {
+        viewModelScope.launch {
+            val added = localPlaylistStore.addSong(playlistId, song)
+            if (!added) _queueNotice.value = "已在歌单里,不重复添加"
+        }
+    }
+
+    fun removeSongFromLocalPlaylist(playlistId: Long, bvid: String) {
+        viewModelScope.launch { localPlaylistStore.removeSong(playlistId, bvid) }
+    }
+
+    /**
      * 「下一首播放」(列表行长按):插到当前曲后面,不打断播放、不动现有队列。
      * 已在队列 = 移到当前曲后、当前曲本身 = 不动(PlayerController 内判定),提示相应区分。
      * 先设默认提示再下发指令:已连接时回调同步执行覆盖它,未连接时异步覆盖,终值都正确。
@@ -698,6 +729,11 @@ class MainViewModel(
     val queueNotice: StateFlow<String?> = _queueNotice.asStateFlow()
     fun consumeQueueNotice() {
         _queueNotice.value = null
+    }
+
+    /** 任意操作结果的通用出口(收藏弹窗等无 VM 流的调用方 push,全局提示条消费)。 */
+    fun pushNotice(message: String?) {
+        _queueNotice.value = message
     }
 
     /** 队列抽屉下载钮:下载当前播放曲。走 DownloadManager 队列(进度/取消见下载页)。 */

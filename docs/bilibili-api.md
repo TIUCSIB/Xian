@@ -239,6 +239,15 @@ Referer: https://www.bilibili.com/account/history
 
 **续播**:`history.progress` 秒数写进 `Song.resumePositionMs` → `PlayerController.playQueue(items, index, startPositionMs)` 的第三参(`setMediaItems` 起播位置),不额外 seek。「听到 00:26」这类提示单独走 `Song.progressHint`,**不要拼进 artist** —— 否则播放器/通知栏也会挂着它。
 
+## 13b. 合集不可搜索(2026-10-15 实测)
+
+想「按关键词搜合集」没有可用接口:
+- `search/type` 的 `search_type=season/series/collect` 全部 `-1200 被降级过滤`(风控,与 bilibili_music 同类);
+- 网页聚合搜索 `search/all/v2` 的返回类型(video/user/article/bangumi/live/...)里**根本没有合集类型**——B 站网页搜索本身不提供搜合集;
+- `bili_user`(搜用户)同样 -1200,「先搜 UP 再拉他的 seasons_series_list」的曲线方案也走不通。
+
+结论:合集发现只能靠站外(分享链接粘贴,已支持)或站内浏览 UP 主页。
+
 ## 14. UP 主合集(= 歌单,2026-10-10 加)
 
 「我的」页支持粘贴合集链接当歌单。两个实测端点,均匿名可用:

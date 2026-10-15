@@ -18,8 +18,6 @@ import dev.avsong.data.remote.ViewResponse
 import dev.avsong.domain.NotLoggedInException
 import dev.avsong.domain.PagedResult
 import dev.avsong.domain.Song
-import dev.avsong.domain.SearchDuration
-import dev.avsong.domain.SearchOrder
 import dev.avsong.domain.SongRepository
 import dev.avsong.domain.formatClock
 import kotlinx.coroutines.Dispatchers
@@ -52,13 +50,9 @@ object BiliSongRepository : SongRepository {
 
     // ---------- 挂起接口(UI 层) ----------
 
-    override suspend fun search(
-        keyword: String,
-        page: Int,
-        order: SearchOrder,
-        duration: SearchDuration,
-    ): PagedResult<Song> = withContext(Dispatchers.IO) {
-        val data = searchBlocking(keyword, page, order, duration)
+    override suspend fun search(keyword: String, page: Int): PagedResult<Song> =
+        withContext(Dispatchers.IO) {
+        val data = searchBlocking(keyword, page)
         PagedResult(
             items = data.result.filter { it.bvid.isNotBlank() }.map { it.toSong() },
             page = page,
@@ -271,25 +265,14 @@ object BiliSongRepository : SongRepository {
     // ---------- 搜索 / 榜单 ----------
 
     @Throws(IOException::class)
-    private fun searchBlocking(
-        keyword: String,
-        page: Int,
-        order: SearchOrder = SearchOrder.COMPREHENSIVE,
-        duration: SearchDuration = SearchDuration.ANY,
-    ): dev.avsong.data.remote.SearchData {
+    private fun searchBlocking(keyword: String, page: Int): dev.avsong.data.remote.SearchData {
         ensureBuvid()
-        // order/duration 是 B 站网页搜索的排序与时长筛参数,实测匿名带 buvid 可用:
-        // order: click=最多播放 pubdate=最新发布;duration: 1<10min 2=10-30min 3=30-60min 4>60min
         val url = (baseUrl + "/x/web-interface/search/type").toHttpUrl().newBuilder()
             .addQueryParameter("search_type", "video")
             .addQueryParameter("keyword", keyword)
             .addQueryParameter("page", page.toString())
             .addQueryParameter("page_size", "30")
             .addQueryParameter("platform", "pc")
-            .apply {
-                if (order.apiValue.isNotEmpty()) addQueryParameter("order", order.apiValue)
-                if (duration.apiValue.isNotEmpty()) addQueryParameter("duration", duration.apiValue)
-            }
             .build()
         val resp = getJson(url.toString(), referer = "https://search.bilibili.com/")
         return json.decodeFromString<SearchResponse>(resp).data ?: throw IOException("搜索返回空数据")

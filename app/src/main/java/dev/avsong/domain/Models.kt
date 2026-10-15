@@ -43,21 +43,6 @@ data class PagedResult<T>(
     val hasMore: Boolean,
 )
 
-/** 搜索结果排序(对应 B 站搜索 order 参数,实测匿名可用)。 */
-enum class SearchOrder(val apiValue: String, val label: String) {
-    COMPREHENSIVE("", "综合排序"),
-    MOST_PLAYED("click", "最多播放"),
-    NEWEST("pubdate", "最新发布"),
-}
-
-/** 搜索结果时长筛选(对应 B 站搜索 duration 参数:1<10分钟 2=10-30分钟 3=30-60分钟 4>60分钟)。 */
-enum class SearchDuration(val apiValue: String, val label: String) {
-    ANY("", "不限时长"),
-    UNDER_10MIN("1", "10分钟内"),
-    MIN_10_30("2", "10-30分钟"),
-    MIN_30_60("3", "30-60分钟"),
-    OVER_60MIN("4", "1小时以上"),
-}
 
 fun Long.formatClock(): String {
     if (this <= 0) return "00:00"

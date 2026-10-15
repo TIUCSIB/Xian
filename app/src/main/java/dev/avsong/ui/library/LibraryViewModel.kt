@@ -85,9 +85,16 @@ class LibraryViewModel(
         }
     }
 
+    /** 新建收藏夹:失败写 actionError 就地红字(原来 runCatching 吞掉,失败看起来像没反应);
+     *  成功不弹提示——列表刷新出新夹本身就是反馈。 */
     fun createFolder(title: String, intro: String, isPrivate: Boolean) {
         viewModelScope.launch {
-            runCatching { favRepo.createFolder(title, intro, isPrivate) }
+            try {
+                favRepo.createFolder(title, intro, isPrivate)
+                _state.update { it.copy(actionError = null) }
+            } catch (e: Exception) {
+                _state.update { it.copy(actionError = "创建收藏夹失败:${e.message}") }
+            }
             refresh()
         }
     }

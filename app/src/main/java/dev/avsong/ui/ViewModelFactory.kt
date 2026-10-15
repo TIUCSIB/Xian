@@ -23,6 +23,8 @@ private class MainViewModelFactory(
             app.favoriteRepository,
             app.searchHistoryStore,
             app.playHistoryStore,
+            app.localPlaylistStore,
+            app.downloadedStore,
         ) as T
     }
 }

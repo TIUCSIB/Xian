@@ -39,6 +39,7 @@ import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CleaningServices
@@ -120,6 +121,8 @@ fun LibraryScreen(
     onOpenDownloads: () -> Unit,
     /** 播放设置子页(音质/历史上限/倍速/睡眠定时/热评展示收纳处,2026-10-15 起)。 */
     onOpenPlaybackSettings: () -> Unit,
+    /** 关于页(项目介绍/版本/检查更新)。 */
+    onOpenAbout: () -> Unit,
     /** 睡眠定时剩余分钟(null=未启用),状态在 MainViewModel;入口行摘要用。 */
     sleepMinutesLeft: Int?,
 ) {
@@ -132,6 +135,7 @@ fun LibraryScreen(
     val scope = rememberCoroutineScope()
     var showThemeSheet by remember { mutableStateOf(false) }
     var showLoginDialog by remember { mutableStateOf(false) }
+    // 本页局部操作反馈(清理缓存/退出登录):与全局队列/下载反馈同一套主题化提示条
     var cacheToast by remember { mutableStateOf<String?>(null) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var cacheBytes by remember { mutableStateOf<Long?>(null) }
@@ -182,6 +186,7 @@ fun LibraryScreen(
                 onOpenDownloads = onOpenDownloads,
                 cacheLabel = cacheBytes?.let { formatCacheSize(it) },
                 onClearCache = { clearAppCache() },
+                onOpenAbout = onOpenAbout,
                 // 已登录才出现「退出登录」行(未登录时该行整个不渲染)
                 showLogout = loggedIn != null,
                 onLogout = { showLogoutConfirm = true },
@@ -201,6 +206,7 @@ fun LibraryScreen(
                 TextButton(onClick = {
                     showLogoutConfirm = false
                     loginVm.logout()
+                    cacheToast = "已退出登录"
                 }) {
                     Text("退出", color = MaterialTheme.colorScheme.error)
                 }
@@ -349,9 +355,10 @@ private fun formatCacheSize(bytes: Long): String = when {
 
 /**
  * 设置区(2026-10-15 重新规划,用户要求按功能归纳、本页不超出一屏滚动):
- * ①「播放设置」入口行(音质/历史上限/倍速/睡眠定时/热评展示全部收进子页,行尾显示摘要);
+ * ①「播放设置」入口行(音质/历史上限/倍速/睡眠定时/热评展示全部收进子页);
  * ② 存储组(已下载入口 + 清理缓存);
- * ③ 账号组(退出登录,仅登录时)。
+ * ③ 关于组(项目介绍/版本/检查更新);
+ * ④ 账号组(退出登录,仅登录时)。
  */
 @Composable
 private fun SettingsCard(
@@ -360,6 +367,7 @@ private fun SettingsCard(
     onOpenDownloads: () -> Unit,
     cacheLabel: String?,
     onClearCache: () -> Unit,
+    onOpenAbout: () -> Unit,
     showLogout: Boolean,
     onLogout: () -> Unit,
 ) {
@@ -396,6 +404,20 @@ private fun SettingsCard(
                 title = "清理缓存",
                 value = cacheLabel ?: "…",
                 onClick = onClearCache,
+            )
+        }
+        // 关于组:项目介绍/版本号/检查更新/项目主页
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            SettingsItem(
+                icon = Icons.Rounded.Info,
+                title = "关于",
+                value = null,
+                onClick = onOpenAbout,
             )
         }
         // 账号组:仅登录时出现(原账户头右上角的退出图标收进这里,2026-10-13 用户要求)

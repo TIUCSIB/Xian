@@ -54,6 +54,13 @@ class DownloadManager(context: Context) {
     /** 进行中的任务快照(排队/运行/失败;完成即移除)。最新加入在前。 */
     val tasks: StateFlow<List<Task>> = _tasks.asStateFlow()
 
+    /** 终点反馈(下载页之外的用户也需要知道结果):失败立即报,成功由 drain 收尾时汇总。 */
+    private val _events = MutableStateFlow<String?>(null)
+    val events: StateFlow<String?> = _events.asStateFlow()
+    fun consumeEvent() {
+        _events.value = null
+    }
+
     private var worker: Job? = null
 
     /** 入队一首。已在队列(任何状态)或已下载过则跳过;返回是否真的入了队。 */
@@ -103,13 +110,16 @@ class DownloadManager(context: Context) {
         worker = scope.launch { drain() }
     }
 
-    /** 逐个取队首 QUEUED 任务执行;任务被取消(worker job cancel)时静默退出。 */
+    /** 逐个取队首 QUEUED 任务执行;任务被取消(worker job cancel)时静默退出。
+     *  收尾时若本轮有成功,汇总一条「N 首下载完成」(批量 20 首不能连发 20 条提示)。 */
     private suspend fun drain() {
+        var succeeded = 0
         while (true) {
             val next = _tasks.value.firstOrNull { it.state == State.QUEUED } ?: break
             update(next.bvid) { it.copy(state = State.RUNNING, progress = -1, receivedBytes = 0, totalBytes = -1) }
             try {
                 execute(next)
+                succeeded++
                 // 成功:从任务列表移除(成果在 DownloadedStore)
                 _tasks.update { list -> list.filterNot { it.bvid == next.bvid } }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -120,7 +130,11 @@ class DownloadManager(context: Context) {
                 throw e // 让 job 真正结束,startWorkerIfNeeded 下次再拉起
             } catch (e: Exception) {
                 update(next.bvid) { it.copy(state = State.FAILED, error = e.message ?: e.javaClass.simpleName) }
+                _events.value = "下载失败:${next.title}"
             }
+        }
+        if (succeeded > 0) {
+            _events.value = if (succeeded == 1) "下载完成" else "已下载 $succeeded 首"
         }
     }
 

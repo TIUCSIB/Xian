@@ -81,6 +81,7 @@ import dev.avsong.ui.library.CollectionContentScreen
 import dev.avsong.ui.library.FavoritePickerDialog
 import dev.avsong.ui.library.FolderContentScreen
 import dev.avsong.ui.library.LibraryScreen
+import dev.avsong.ui.library.LocalPlaylistContentScreen
 import dev.avsong.ui.library.PlaylistScreen
 import dev.avsong.ui.login.LoginScreen
 import dev.avsong.ui.player.PlayerScreen
@@ -103,14 +104,19 @@ object Routes {
     const val LOGIN = "login"
     const val FOLDER = "library/folder/{folderId}?title={title}"
     const val COLLECTION = "library/collection/{mid}/{seasonId}?title={title}"
+    const val LOCAL_PLAYLIST = "library/local/{playlistId}?title={title}"
     const val DOWNLOADED = "library/downloaded"
     const val PLAYBACK_SETTINGS = "library/playback-settings"
+    const val ABOUT = "library/about"
 
     fun folder(id: Long, title: String): String =
         "library/folder/$id?title=${android.net.Uri.encode(title)}"
 
     fun collection(mid: Long, seasonId: Long, title: String): String =
         "library/collection/$mid/$seasonId?title=${android.net.Uri.encode(title)}"
+
+    fun localPlaylist(id: Long, title: String): String =
+        "library/local/$id?title=${android.net.Uri.encode(title)}"
 }
 
 /** 顶级 tab 路由 → 对应 tab;非 tab 页(播放/队列/登录/收藏夹内容)返回 null。 */
@@ -159,25 +165,48 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
     }
 
     // 下载/队列插入反馈:主题化应用内提示条(系统 Toast 带机器人图标且配色固定,与主题脱节,用户点名换掉)。
-    // 两路消息共用一个 Host,同时到达时显示最新的那条(消费即置空,StateFlow 末值天然是"最新")。
+    // 多路消息共用一个 Host,同时到达时显示最新的那条(消费即置空,StateFlow 末值天然是"最新")。
     val appContext = LocalContext.current.applicationContext
     val downloadMsg by viewModel.downloadMessage.collectAsState()
     val queueNotice by viewModel.queueNotice.collectAsState()
-    val notice = queueNotice ?: downloadMsg
+    // DownloadManager 终点事件(下载完成汇总/失败),与上面两路同通道
+    val dlEvents by app.downloadManager.events.collectAsState()
+    val notice = queueNotice ?: downloadMsg ?: dlEvents
     ThemedNoticeHost(
         message = notice,
         onConsumed = {
-            if (queueNotice != null) viewModel.consumeQueueNotice()
-            else viewModel.consumeDownloadMessage()
+            when {
+                queueNotice != null -> viewModel.consumeQueueNotice()
+                downloadMsg != null -> viewModel.consumeDownloadMessage()
+                else -> app.downloadManager.consumeEvent()
+            }
         },
     )
 
     if (showFavoritePicker) {
         val bvid = favoriteTargetBvid ?: state.player.currentMediaId ?: ""
         if (bvid.isNotBlank()) {
+            // 本地歌单勾选需要歌曲快照:先查播放队列,再查播放历史(播放过必有记录)。
+            // 都没有(从未播过、列表直接弹)时构造最小快照 —— 本地歌单只要 bvid 就能播(bili:// 现取)。
+            val localTarget = remember(bvid, playHistory) {
+                state.player.queue.firstOrNull { it.mediaId == bvid }?.let {
+                    dev.avsong.domain.Song(bvid, title = it.title, artist = it.artist, coverUrl = it.artworkUri)
+                }
+                    ?: playHistory.firstOrNull { it.bvid == bvid }
+                    ?: dev.avsong.domain.Song(bvid, title = "", artist = "", coverUrl = null)
+            }
+            val localPlaylists by viewModel.localPlaylistStore.playlists.collectAsState()
             FavoritePickerDialog(
                 favRepo = viewModel.favoriteRepository,
                 bvid = bvid,
+                // 收藏结果 push 进全局提示条流(与队列插入反馈同一通道)
+                onResult = viewModel::pushNotice,
+                localPlaylists = localPlaylists,
+                onToggleLocal = { pl, checked ->
+                    if (checked) viewModel.removeSongFromLocalPlaylist(pl.id, bvid)
+                    else viewModel.saveSongToLocalPlaylist(pl.id, localTarget)
+                },
+                onCreateLocal = { name -> viewModel.createLocalPlaylist(name) },
                 onDismiss = {
                     showFavoritePicker = false
                     favoriteTargetBvid = null
@@ -185,6 +214,8 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
             )
         }
     }
+
+
 
     // 迷你条队列抽屉:从底部滑出,内嵌 QueueContent(播放队列唯一入口,歌单 tab 已改为歌单中心);
     // 内容固定 4/5 屏(fillMaxHeight(0.8f),用户要求 2/3 仍不够),tonalElevation=0 贴合扁平风
@@ -417,9 +448,16 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onHistoryClear = viewModel::clearHistory,
                         onPlayNext = viewModel::playNext,
                         onAddToQueue = viewModel::addToQueue,
+                        onFavorite = { song ->
+                            favoriteTargetBvid = song.bvid
+                            showFavoritePicker = true
+                        },
+                        onDownload = { song -> viewModel.downloadSong(appContext, song) },
                     )
                 }
                 composable(Routes.PLAYLIST) {
+                    // 本地自建歌单数据经 StateFlow 直读(建夹/删夹/重命名/存曲都即时反映)
+                    val localPlaylists by viewModel.localPlaylistStore.playlists.collectAsState()
                     PlaylistScreen(
                         onOpenFolder = { folder ->
                             navController.navigate(Routes.folder(folder.id, folder.title))
@@ -437,6 +475,16 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         player = state.player,
                         playingId = viewModel.playingPlaylistId(state.player),
                         onLogin = { navController.navigate(Routes.LOGIN) },
+                        localPlaylists = localPlaylists,
+                        onCreateLocalPlaylist = { name ->
+                            viewModel.createLocalPlaylist(name)
+                        },
+                        onDeleteLocalPlaylist = { pl -> viewModel.deleteLocalPlaylist(pl.id) },
+                        onRenameLocalPlaylist = { pl, name -> viewModel.renameLocalPlaylist(pl.id, name) },
+                        onOpenLocalPlaylist = { pl ->
+                            navController.navigate(Routes.localPlaylist(pl.id, pl.name))
+                        },
+                        onPlayLocalPlaylist = { pl -> viewModel.playLocalPlaylist(pl.id) },
                     )
                 }
                 composable(Routes.MINE) {
@@ -444,6 +492,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onLogin = { navController.navigate(Routes.LOGIN) },
                         onOpenDownloads = { navController.navigate(Routes.DOWNLOADED) },
                         onOpenPlaybackSettings = { navController.navigate(Routes.PLAYBACK_SETTINGS) },
+                        onOpenAbout = { navController.navigate(Routes.ABOUT) },
                         sleepMinutesLeft = sleepMinutesLeft,
                     )
                 }
@@ -481,6 +530,9 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         currentMediaId = state.player.currentMediaId,
                         isPlaying = state.player.isPlaying,
                     )
+                }
+                composable(Routes.ABOUT) {
+                    dev.avsong.ui.settings.AboutScreen(onBack = { navController.popBackStack() })
                 }
                 composable(Routes.LOGIN) {
                     LoginScreen(onBack = { navController.popBackStack() })
@@ -531,11 +583,32 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         isPlaying = state.player.isPlaying,
                     )
                 }
+                composable(Routes.LOCAL_PLAYLIST) { entry ->
+                    val playlistId = entry.arguments?.getString("playlistId")?.toLongOrNull() ?: 0L
+                    LocalPlaylistContentScreen(
+                        playlistId = playlistId,
+                        viewModel = viewModel,
+                        onBack = { navController.popBackStack() },
+                        // 点歌=插到当前曲后立即播,不替换队列(与收藏夹/合集详情一致);播放全部/随机播放仍整队
+                        onPlay = { songs, index -> viewModel.playNow(songs[index]) },
+                        onShuffle = { songs -> viewModel.playQueueShuffled(songs) },
+                        onPlayNext = viewModel::playNext,
+                        onAddToQueue = viewModel::addToQueue,
+                        onFavorite = { song ->
+                            favoriteTargetBvid = song.bvid
+                            showFavoritePicker = true
+                        },
+                        onDownload = { song -> viewModel.downloadSong(appContext, song) },
+                        currentMediaId = state.player.currentMediaId,
+                        isPlaying = state.player.isPlaying,
+                    )
+                }
             }
         }
     }
 
         // 播放面板:从底部上滑覆盖(组合内 overlay,输入必然可达;非弹窗窗口)
+        val localPlaylists2 = viewModel.localPlaylistStore.playlists.value
         AnimatedVisibility(
             visible = showPlayerSheet,
             enter = slideInVertically(initialOffsetY = { it }),
@@ -555,6 +628,24 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                 danmakuEnabled = app.settingsStore.state.value.danmakuEnabled,
                 danmakuMode = danmakuSettings.danmakuMode,
                 positionProvider = viewModel::currentPosition,
+                // 播放页爱心的本地歌单区:快照直接用当前播放曲的 PlayerState 字段拼
+                localPlaylists = localPlaylists2,
+                onToggleLocal = { pl, checked ->
+                    val ps = state.player
+                    val bvid = ps.currentMediaId
+                    if (bvid != null) {
+                        val song = dev.avsong.domain.Song(
+                            bvid = bvid,
+                            title = ps.title.orEmpty(),
+                            artist = ps.artist.orEmpty(),
+                            coverUrl = ps.artworkUri,
+                            durationSec = if (ps.durationMs > 0) ps.durationMs / 1000 else 0,
+                        )
+                        if (checked) viewModel.removeSongFromLocalPlaylist(pl.id, bvid)
+                        else viewModel.saveSongToLocalPlaylist(pl.id, song)
+                    }
+                },
+                onCreateLocal = { name -> viewModel.createLocalPlaylist(name) },
             )
         }
     }
