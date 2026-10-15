@@ -213,6 +213,15 @@ data class ReplyResponse(
 @Serializable
 data class ReplyData(
     val replies: List<ReplyItem>? = null,
+    /** 游标翻页:next 要回传给下一页请求(实测 next=1 自增是坑,必须用响应值)。 */
+    val cursor: ReplyCursor? = null,
+)
+
+@Serializable
+data class ReplyCursor(
+    val next: Long? = null,
+    /** 翻页是否到底(B 站返回 true 表示没有更多)。 */
+    @SerialName("is_end") val isEnd: Boolean = false,
 )
 
 @Serializable

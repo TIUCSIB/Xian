@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -140,12 +141,21 @@ fun MiniPlayerBar(
         val arcColor = MaterialTheme.colorScheme.primary
         Box(contentAlignment = Alignment.Center) {
             IconButton(onClick = onPlayPause, modifier = Modifier.size(40.dp)) {
-                Icon(
-                    imageVector = if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                    contentDescription = if (state.isPlaying) "暂停" else "播放",
-                    // 图标 18dp + 环 22dp:环的外径 = 队列图标的占位(都是 22dp),整组不再压过队列钮
-                    modifier = Modifier.size(18.dp),
-                )
+                if (state.isBuffering) {
+                    // 缓冲中(点歌取链/加载):转圈代替播放键,给「点了正在来」的反馈,防连点
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    Icon(
+                        imageVector = if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        contentDescription = if (state.isPlaying) "暂停" else "播放",
+                        // 图标 18dp + 环 22dp:环的外径 = 队列图标的占位(都是 22dp),整组不再压过队列钮
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
             // 环压在裸图标外圈:底轨 + 进度弧(纯描边,无填充无阴影)
             Canvas(Modifier.size(22.dp)) {

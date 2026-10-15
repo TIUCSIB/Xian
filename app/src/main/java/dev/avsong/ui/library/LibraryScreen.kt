@@ -119,6 +119,7 @@ import kotlin.math.sin
 fun LibraryScreen(
     onLogin: () -> Unit,
     onOpenDownloads: () -> Unit,
+    onOpenPlayHistory: () -> Unit,
     /** 播放设置子页(音质/历史上限/倍速/睡眠定时/热评展示收纳处,2026-10-15 起)。 */
     onOpenPlaybackSettings: () -> Unit,
     /** 关于页(项目介绍/版本/检查更新)。 */
@@ -184,6 +185,7 @@ fun LibraryScreen(
                 onOpenPlaybackSettings = onOpenPlaybackSettings,
                 downloadedCount = downloadedTracks.size,
                 onOpenDownloads = onOpenDownloads,
+                onOpenPlayHistory = onOpenPlayHistory,
                 cacheLabel = cacheBytes?.let { formatCacheSize(it) },
                 onClearCache = { clearAppCache() },
                 onOpenAbout = onOpenAbout,
@@ -365,6 +367,7 @@ private fun SettingsCard(
     onOpenPlaybackSettings: () -> Unit,
     downloadedCount: Int,
     onOpenDownloads: () -> Unit,
+    onOpenPlayHistory: () -> Unit,
     cacheLabel: String?,
     onClearCache: () -> Unit,
     onOpenAbout: () -> Unit,
@@ -386,13 +389,19 @@ private fun SettingsCard(
                 onClick = onOpenPlaybackSettings,
             )
         }
-        // 存储组:已下载(离线曲库入口)+ 清理缓存(行尾显示当前图片缓存大小)
+        // 存储组:播放历史 + 已下载(离线曲库入口)+ 清理缓存(行尾显示当前图片缓存大小)
         Column(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
         ) {
+            SettingsItem(
+                icon = Icons.Rounded.History,
+                title = "播放历史",
+                value = null,
+                onClick = onOpenPlayHistory,
+            )
             SettingsItem(
                 icon = Icons.Rounded.Download,
                 title = "已下载",

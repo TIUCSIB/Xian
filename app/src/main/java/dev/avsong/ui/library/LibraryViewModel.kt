@@ -270,10 +270,11 @@ class FolderContentViewModel(
      * 与合集 playWithFill 同构(同一目的:收藏夹几百首时队列不该只有第一页 20 首),
      * 数据源换成收藏夹分页接口。单页失败重试 2 次防 -412,仍失败则中止(保留已入列部分)。
      */
-    fun playWithFill(startIndex: Int, playLoaded: (List<Song>, Int) -> Unit) {
+    fun playWithFill(startIndex: Int, playLoaded: (List<Song>, Int) -> Unit, replace: Boolean = false) {
         val s = _state.value
-        // ⚠ 查真标记 _loadingAll(UiState 里没有该字段);loading 中也不补,防与首载竞态
-        if (s.loading || _loadingAll.value) return
+        // ⚠ 查真标记 _loadingAll(UiState 里没有该字段);loading 中也不补,防与首载竞态。
+        // replace(头部「播放」= 换队)绕过护栏:旧补全循环的 session 会被 playQueue 自增作废自动中止
+        if (!replace && (s.loading || _loadingAll.value)) return
         _loadingAll.value = true
         viewModelScope.launch {
             playLoaded(s.songs, startIndex)
@@ -406,14 +407,15 @@ class CollectionContentViewModel(
      * 队列会从 20 首一路长到合集全量(用户反馈:等全部拉完再播太慢)。
      * 单页失败重试 2 次(间隔 1.5s,防 B 站限流 -412),仍失败则中止补全(保留已入列部分)。
      */
-    fun playWithFill(startIndex: Int, playLoaded: (List<Song>, Int) -> Unit) {
+    fun playWithFill(startIndex: Int, playLoaded: (List<Song>, Int) -> Unit, replace: Boolean = false) {
         val s = _state.value
-        // ⚠ 必须查 _loadingAll(真标记);UiState.loadingAll 没人写,查它=没护栏(实测 978 变 1716)
-        if (s.loading || _loadingAll.value) return
+        // replace(头部「播放」= 换队):旧补全循环的 session 会被 playQueue 自增作废而自动中止,
+        // 所以可以绕过 _loadingAll 护栏直接开新补全 —— 但同一时刻仍只允许一个(占位在 launch 前同步做)
+        if (!replace && (s.loading || _loadingAll.value)) return
         // 同步占位:launch 体在极端情况下可能晚于同帧的第二次调用执行
         _loadingAll.value = true
         viewModelScope.launch {
-            // 1) 已加载部分先播(点哪首从哪首起)
+            // 1) 已加载部分先播(点哪首从哪首起);replace 时 playLoaded 内部是 playQueue = 整队替换
             playLoaded(s.songs, startIndex)
             // 换队后捕获代次:循环里一旦发现用户又换了播放/清空了队列就中止,别污染新队列
             val session = playerController.session

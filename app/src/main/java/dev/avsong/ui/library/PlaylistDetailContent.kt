@@ -93,6 +93,10 @@ fun PlaylistDetailContent(
     onLoadMore: () -> Unit,
     onBack: () -> Unit,
     onPlay: (List<Song>, Int) -> Unit,
+    /** 头部「播放」钮专用(2026-10-15 起)= 整队替换语义;缺省回退 onPlay(songs, 0)。 */
+    onPlayAll: ((List<Song>) -> Unit)? = null,
+    /** 列表顶部进度行(如「已加载 45/978,补全中…」);null=不渲染。大合集补全时的加载反馈。 */
+    loadingHint: String? = null,
     onShuffle: (List<Song>) -> Unit,
     currentMediaId: String?,
     isPlaying: Boolean,
@@ -259,9 +263,19 @@ fun PlaylistDetailContent(
                             metaLine = metaLine,
                             title = title,
                             subtitle = subtitle,
-                            onPlayAll = { onPlay(songs, 0) },
+                            onPlayAll = { if (onPlayAll != null) onPlayAll(songs) else onPlay(songs, 0) },
                             onShuffleAll = { onShuffle(songs) },
                         )
+                    }
+                    if (loadingHint != null) {
+                        item(key = "loading-hint") {
+                            Text(
+                                loadingHint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 20.dp, bottom = 4.dp),
+                            )
+                        }
                     }
                     itemsIndexed(songs, key = { _, s -> s.bvid }) { index, song ->
                         NumberedSongRow(

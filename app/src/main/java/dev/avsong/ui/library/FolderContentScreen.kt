@@ -25,6 +25,8 @@ fun FolderContentScreen(
     folderTitle: String,
     onBack: () -> Unit,
     onPlay: (List<Song>, Int) -> Unit,
+    /** 头部「播放」= 整队替换:把已加载部分整队入列并起播(不走 playNow 插播)。 */
+    onPlayQueue: (List<Song>) -> Unit,
     onShuffle: (List<Song>) -> Unit,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
@@ -53,13 +55,21 @@ fun FolderContentScreen(
         hasMore = state.hasMore,
         onLoadMore = vm::loadMore,
         onBack = onBack,
+        // 头部「播放」= 整队替换(与合集详情同款,2026-10-15 用户反馈);点行仍=插播不换队
+        onPlayAll = { _ -> vm.playWithFill(0, { songs, _ -> onPlayQueue(songs) }, replace = true) },
         // 播放前先拉全量:否则大收藏夹点播放只入列已加载的第一页(20 首);与合集详情同款
         onPlay = { _, index ->
             // 补全进行中的点击不被护栏吞掉(与合集详情同坑):直播所点那一首
             if (loadingAll) onPlay(listOf(state.songs[index]), 0)
             else vm.playWithFill(index, onPlay)
         },
-        onShuffle = { loaded -> vm.loadAll { all -> onShuffle(all) } },
+        // 随机播放:补全/加载全量进行中不能被 loadAll 护栏吞掉(与播放三分流同坑)——
+        // 此时把已加载部分就地洗牌整队替换(用户点的是「随机」不是「等全量」);
+        // 空闲时维持原策略:拉全量后洗(大合集随机要摇到全量)
+        onShuffle = { _ ->
+            if (loadingAll) onShuffle(state.songs.shuffled())
+            else vm.loadAll { all -> onShuffle(all) }
+        },
         currentMediaId = currentMediaId,
         isPlaying = isPlaying,
         onPlayNext = onPlayNext,
@@ -68,6 +78,7 @@ fun FolderContentScreen(
         onDownload = onDownload,
         onRemoveSong = { vm.removeFromFolder(it) },
         loadingAll = loadingAll,
+        loadingHint = if (loadingAll) "已加载 ${state.songs.size} 首,补全中…" else null,
         onLoadAll = vm::loadAll,
         menuActions = listOf(
             "下载全部(已加载 " + state.songs.size.toString() + " 首)" to { onDownloadAll(state.songs) },

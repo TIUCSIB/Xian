@@ -4,6 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.verticalScroll
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -59,6 +63,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -117,19 +122,25 @@ fun PlayerScreen(
 ) {
     var position by remember(state.currentMediaId, state.isPlaying) { mutableLongStateOf(state.positionMs) }
     var showLyric by remember { mutableStateOf(false) }
-    // 热评数据:点热评键时按需拉一次(进页不自动拉不自动飘,用户要求;失败=空列表静默)
-    var hotRepliesState by remember { mutableStateOf<List<dev.avsong.data.ReplyRepository.HotReply>?>(null) }
+    // 热评数据:点热评键时按需拉一次(进页不自动拉不自动飘,用户要求)。
+    // 翻页:replies 累积追加,cursor 为响应回传的游标(null=到底/失败);失败置 replyError 供抽屉区分空态。
+    var hotReplies by remember { mutableStateOf<List<dev.avsong.data.ReplyRepository.HotReply>>(emptyList()) }
+    var repliesCursor by remember { mutableStateOf<Long?>(0L) } // 0=还没拉过首页,null=到底
     var repliesLoading by remember { mutableStateOf(false) }
+    var replyError by remember { mutableStateOf<String?>(null) }
     // 列表抽屉模式(mode=1)的开合
     var showReplySheet by remember { mutableStateOf(false) }
     // 弹幕模式(mode=0)的开合:点热评键开/再点关;两模式都是点击触发,不再自动显示
     var showDanmaku by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    // 弹幕/抽屉共用的按需加载:没拉过才发请求(换曲后 hotRepliesState 已被清空自然重拉)
-    fun ensureReplies() {
+
+    // 拉一页(首页或后续);已在加载/已到底则忽略。失败保留已有列表(抽屉里看得到错误行)。
+    fun loadReplies() {
         val bvid = state.currentMediaId ?: return
-        if (hotRepliesState != null || repliesLoading) return
+        if (repliesLoading || repliesCursor == null && hotReplies.isNotEmpty()) return
+        val cursor = repliesCursor ?: return
         repliesLoading = true
+        replyError = null
         scope.launch {
             val song = dev.avsong.domain.Song(
                 bvid = bvid,
@@ -137,17 +148,41 @@ fun PlayerScreen(
                 artist = state.artist.orEmpty(),
                 coverUrl = state.artworkUri,
             )
-            hotRepliesState = dev.avsong.data.ReplyRepository.hotRepliesFor(song) { it ->
-                favoriteRepository.fetchAid(it)
+            val aid = if (song.aid > 0) song.aid
+            else runCatching { favoriteRepository.fetchAid(song.bvid) }.getOrDefault(0L)
+            try {
+                val page = dev.avsong.data.ReplyRepository.hotReplies(aid, cursor.takeIf { it > 0 })
+                hotReplies = hotReplies + page.replies
+                repliesCursor = page.nextCursor
+                if (page.replies.isEmpty() && page.nextCursor == null && hotReplies.isEmpty()) {
+                    replyError = "暂无热评"
+                }
+            } catch (e: Exception) {
+                replyError = if (hotReplies.isEmpty()) "加载失败:${e.message}" else null
+                if (hotReplies.isEmpty()) repliesCursor = null // 首页失败:允许点重试(reset)
+            } finally {
+                repliesLoading = false
             }
-            repliesLoading = false
         }
     }
+
+    // 首次加载入口(点热评键/开弹幕时):仅在完全没数据时发首页请求
+    fun ensureReplies() {
+        if (hotReplies.isEmpty() && repliesCursor != null && !repliesLoading) loadReplies()
+    }
+    // 首页失败后的重试:恢复游标再走 loadReplies
+    fun retryReplies() {
+        if (hotReplies.isEmpty()) repliesCursor = 0L
+        loadReplies()
+    }
+
     // 换曲清数据;若弹幕开着则自动重拉(用户开着的弹幕换曲不消失,后续曲也持续有弹幕)
     LaunchedEffect(state.currentMediaId) {
-        hotRepliesState = null
+        hotReplies = emptyList()
+        repliesCursor = 0L
         repliesLoading = false
-        if (showDanmaku) ensureReplies()
+        replyError = null
+        if (showDanmaku) loadReplies()
     }
     // 收藏:爱心回显 + 弹窗开关(声明在函数级,信息卡爱心与弹窗共用)
     var favChecked by remember(state.currentMediaId) { mutableStateOf(false) }
@@ -257,9 +292,9 @@ fun PlayerScreen(
             // 横向破出 Column 的 16dp 内边距(左右各扩 16dp):弹幕必须贴真正屏幕边缘游入游出,
             // 否则裁剪边界落在半路,字符被「切」在离屏边 16dp 处(用户实测突兀)。
             // 不消费点击 → 封面点击切歌词/歌词点击 seek 的手势不受影响;歌词态不显示(沉浸阅读)
-            if (showDanmaku && hotRepliesState.orEmpty().isNotEmpty()) {
+            if (showDanmaku && hotReplies.isNotEmpty()) {
                 ReplyDanmaku(
-                    replies = hotRepliesState.orEmpty(),
+                    replies = hotReplies,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
@@ -351,6 +386,7 @@ fun PlayerScreen(
                 WaveformSeekBar(
                     progress = (position.toFloat() / dur).coerceIn(0f, 1f),
                     onSeekFraction = { frac -> seekAndShow((frac * dur).roundToLong()) },
+                    durationMs = state.durationMs,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Row(
@@ -475,62 +511,99 @@ fun PlayerScreen(
                         modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 8.dp),
                     )
                     when {
-                        hotRepliesState == null -> Box(
-                            Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                        // 首页失败/真没评论:给明确文案;失败带「点按重试」(点行重发首页请求)
+                        hotReplies.isEmpty() && replyError != null -> Box(
+                            Modifier.fillMaxWidth().clickable { retryReplies() }.padding(vertical = 32.dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            if (repliesLoading) {
-                                CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
-                            } else {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
-                                    "加载失败",
+                                    replyError!!,
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                if (replyError!!.startsWith("加载失败")) {
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        "点按重试",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
                             }
                         }
 
-                        hotRepliesState.orEmpty().isEmpty() -> Text(
-                            "暂无热门评论",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 24.dp),
-                        )
-
-                        else -> Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                                .verticalScroll(rememberScrollState()),
+                        hotReplies.isEmpty() && repliesLoading -> Box(
+                            Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                            contentAlignment = Alignment.Center,
                         ) {
-                            hotRepliesState.orEmpty().forEach { r ->
-                                Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)) {
-                                    Text(
-                                        r.uname,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(
-                                        r.message,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                    )
-                                    Spacer(Modifier.height(2.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            Icons.Filled.ThumbUp,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(14.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                        Spacer(Modifier.width(4.dp))
+                            CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                        }
+
+                        else -> {
+                            // LazyColumn 才能做「滚到底自动加载下一页」:普通 Column+verticalScroll
+                            // 没有可见项回调,翻页触发不了
+                            val listState = rememberLazyListState()
+                            LaunchedEffect(listState, hotReplies.size, repliesCursor) {
+                                snapshotFlow {
+                                    val info = listState.layoutInfo
+                                    val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+                                    repliesCursor != null && !repliesLoading &&
+                                        info.totalItemsCount > 0 && last >= info.totalItemsCount - 4
+                                }.collect { nearEnd -> if (nearEnd) loadReplies() }
+                            }
+                            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
+                                items(hotReplies) { r ->
+                                    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)) {
                                         Text(
-                                            "${r.likeCount}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            r.uname,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.SemiBold,
                                         )
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            r.message,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                        Spacer(Modifier.height(2.dp))
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                Icons.Filled.ThumbUp,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(14.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(
+                                                "${r.likeCount}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                }
+                                // 尾部状态行:加载中转圈 / 到底提示 / 加载失败重试行
+                                item {
+                                    Box(
+                                        Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        when {
+                                            repliesLoading -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                            replyError != null -> Text(
+                                                "${replyError} · 点按重试",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.clickable { retryReplies() },
+                                            )
+                                            repliesCursor == null -> Text(
+                                                "— 没有更多了 —",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -571,6 +644,7 @@ fun PlayerScreen(
 /**
  * 音波进度条:竖条波形,已播黄条 / 未播灰条;点击与横向拖动均直接 seek。
  * 条高取稳定伪随机序列,视觉上是固定形状的一条音波(与进度无关)。
+ * 拖动中在手指上方显示目标时间气泡(长歌拖动不知道拖到哪,用户反馈)。
  */
 @Composable
 private fun WaveformSeekBar(
@@ -578,6 +652,8 @@ private fun WaveformSeekBar(
     onSeekFraction: (Float) -> Unit,
     modifier: Modifier = Modifier,
     barCount: Int = 44,
+    /** 总时长(ms):拖动气泡换算目标时间用;<=0 时不显示气泡。 */
+    durationMs: Long = 0L,
 ) {
     val bars = remember(barCount) {
         List(barCount) { i -> 0.22f + 0.78f * abs(sin(i * 12.9898f) * 43758.5453f % 1f) }
@@ -588,27 +664,29 @@ private fun WaveformSeekBar(
     // 未播条用实心灰(用户反馈半透明灰会让卡片显得透明)
     val unplayedColor = MaterialTheme.colorScheme.outline
 
-    Canvas(
-        modifier
-            .height(56.dp)
-            .pointerInput(Unit) {
-                detectTapGestures { offset ->
-                    onSeekFraction((offset.x / size.width).coerceIn(0f, 1f))
+    Box(modifier) {
+        Canvas(
+            Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures { offset ->
+                        onSeekFraction((offset.x / size.width).coerceIn(0f, 1f))
+                    }
                 }
-            }
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures(
-                    onDragStart = { offset -> dragFraction = (offset.x / size.width).coerceIn(0f, 1f) },
-                    onDragEnd = {
-                        dragFraction?.let(onSeekFraction)
-                        dragFraction = null
-                    },
-                    onDragCancel = { dragFraction = null },
-                ) { change, _ ->
-                    change.consume()
-                    dragFraction = (change.position.x / size.width).coerceIn(0f, 1f)
-                }
-            },
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset -> dragFraction = (offset.x / size.width).coerceIn(0f, 1f) },
+                        onDragEnd = {
+                            dragFraction?.let(onSeekFraction)
+                            dragFraction = null
+                        },
+                        onDragCancel = { dragFraction = null },
+                    ) { change, _ ->
+                        change.consume()
+                        dragFraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                    }
+                },
     ) {
         val gap = 2.dp.toPx()
         val barW = (size.width - gap * (barCount - 1)) / barCount
@@ -629,6 +707,23 @@ private fun WaveformSeekBar(
                     topLeft = Offset(x = i * (barW + gap), y = (size.height - size.height * h) / 2),
                     size = Size(width = barW, height = size.height * h),
                     cornerRadius = CornerRadius(barW / 2f),
+                )
+            }
+        }
+    }
+
+        // 拖动中的时间气泡:跟随拖点横向位置,显示目标时间(总时长未知则不显示)
+        dragFraction?.let { frac ->
+            if (durationMs > 0) {
+                Text(
+                    (frac * durationMs).toLong().formatClock(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .offset(x = ((frac - 0.5f) * 180).dp)
+                        .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(50))
+                        .padding(horizontal = 10.dp, vertical = 3.dp),
                 )
             }
         }

@@ -66,6 +66,7 @@ import dev.avsong.ui.MainUiState
 import dev.avsong.ui.common.FlatRefreshIndicator
 import dev.avsong.ui.common.LoadingHint
 import dev.avsong.ui.common.PlayingEqualizer
+import dev.avsong.ui.common.SkeletonList
 import dev.avsong.ui.common.SongList
 import dev.avsong.ui.common.StateHint
 
@@ -145,7 +146,8 @@ fun HomeScreen(
                 when {
                     state.homeNeedsLogin -> LoginRequiredList(onLogin)
                     state.homeLoading && state.homeSongs.isEmpty() ->
-                        LoadingHint("正在加载热歌榜…")
+                        // 首载骨架:列表区灰块占位(与搜索页首搜同款,精选区不动)
+                        SkeletonList(rows = 8)
                     // 加载失败(断网/-412 风控等)区别于空态:明确报错 + 重试按钮(下拉刷新同样可用)
                     state.homeError != null && state.homeSongs.isEmpty() ->
                         ErrorHomeList(state.homeError, onRetry = onRefresh)

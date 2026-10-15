@@ -106,6 +106,7 @@ object Routes {
     const val COLLECTION = "library/collection/{mid}/{seasonId}?title={title}"
     const val LOCAL_PLAYLIST = "library/local/{playlistId}?title={title}"
     const val DOWNLOADED = "library/downloaded"
+    const val PLAY_HISTORY = "library/play-history"
     const val PLAYBACK_SETTINGS = "library/playback-settings"
     const val ABOUT = "library/about"
 
@@ -491,6 +492,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                     LibraryScreen(
                         onLogin = { navController.navigate(Routes.LOGIN) },
                         onOpenDownloads = { navController.navigate(Routes.DOWNLOADED) },
+                        onOpenPlayHistory = { navController.navigate(Routes.PLAY_HISTORY) },
                         onOpenPlaybackSettings = { navController.navigate(Routes.PLAYBACK_SETTINGS) },
                         onOpenAbout = { navController.navigate(Routes.ABOUT) },
                         sleepMinutesLeft = sleepMinutesLeft,
@@ -531,6 +533,15 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         isPlaying = state.player.isPlaying,
                     )
                 }
+                composable(Routes.PLAY_HISTORY) {
+                    dev.avsong.ui.history.PlayHistoryScreen(
+                        history = playHistory,
+                        currentMediaId = state.player.currentMediaId,
+                        isPlaying = state.player.isPlaying,
+                        onBack = { navController.popBackStack() },
+                        onPlayFromHistory = viewModel::playFromHistory,
+                    )
+                }
                 composable(Routes.ABOUT) {
                     dev.avsong.ui.settings.AboutScreen(onBack = { navController.popBackStack() })
                 }
@@ -546,6 +557,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onBack = { navController.popBackStack() },
                         // 点歌=插到当前曲后立即播,不替换队列(与搜索页一致);播放全部/随机播放仍整队
                         onPlay = { songs, index -> viewModel.playNow(songs[index]) },
+                        onPlayQueue = { songs -> viewModel.playQueue(songs, 0) },
                         onShuffle = { songs -> viewModel.playQueueShuffled(songs) },
                         onPlayNext = viewModel::playNext,
                         onAddToQueue = viewModel::addToQueue,
@@ -570,6 +582,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onBack = { navController.popBackStack() },
                         // 点歌=插到当前曲后立即播,不替换队列(与搜索页一致);播放全部/随机播放仍整队
                         onPlay = { songs, index -> viewModel.playNow(songs[index]) },
+                        onPlayQueue = { songs -> viewModel.playQueue(songs, 0) },
                         onShuffle = { songs -> viewModel.playQueueShuffled(songs) },
                         onPlayNext = viewModel::playNext,
                         onAddToQueue = viewModel::addToQueue,
@@ -599,6 +612,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                             showFavoritePicker = true
                         },
                         onDownload = { song -> viewModel.downloadSong(appContext, song) },
+                        onPlayQueue = { songs -> viewModel.playQueue(songs, 0) },
                         currentMediaId = state.player.currentMediaId,
                         isPlaying = state.player.isPlaying,
                     )

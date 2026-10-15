@@ -26,6 +26,8 @@ fun LocalPlaylistContentScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit,
     onPlay: (List<Song>, Int) -> Unit,
+    /** 头部「播放」= 整队替换。 */
+    onPlayQueue: (List<Song>) -> Unit,
     onShuffle: (List<Song>) -> Unit,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
@@ -61,6 +63,7 @@ fun LocalPlaylistContentScreen(
         hasMore = false,
         onLoadMore = {},
         onBack = onBack,
+        onPlayAll = { songs -> onPlayQueue(songs) },
         onPlay = onPlay,
         onShuffle = onShuffle,
         currentMediaId = currentMediaId,

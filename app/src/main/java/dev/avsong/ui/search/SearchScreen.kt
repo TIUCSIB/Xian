@@ -56,6 +56,7 @@ import dev.avsong.ui.MainUiState
 import dev.avsong.ui.SearchUiState
 import dev.avsong.ui.common.LoadingHint
 import dev.avsong.ui.common.SectionHeader
+import dev.avsong.ui.common.SkeletonList
 import dev.avsong.ui.common.SongList
 import dev.avsong.ui.common.StateHint
 
@@ -232,7 +233,8 @@ fun SearchScreen(
                         showPlayButton = false,
                     )
                 } else {
-                    LoadingHint("正在搜索…")
+                    // 首搜无旧结果可保留:骨架行占位(与 SongRow 同构,数据到达不跳版)
+                    SkeletonList(rows = 10)
                 }
             }
             is SearchUiState.Error -> StateHint(Icons.Rounded.MusicOff, search.message, "检查网络后重试,或换个词")

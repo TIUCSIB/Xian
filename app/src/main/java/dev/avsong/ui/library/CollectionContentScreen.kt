@@ -27,6 +27,8 @@ fun CollectionContentScreen(
     fallbackTitle: String,
     onBack: () -> Unit,
     onPlay: (List<Song>, Int) -> Unit,
+    /** 头部「播放」= 整队替换:把已加载部分整队入列并起播(不走 playNow 插播)。 */
+    onPlayQueue: (List<Song>) -> Unit,
     onShuffle: (List<Song>) -> Unit,
     onPlayNext: (Song) -> Unit,
     onAddToQueue: (Song) -> Unit,
@@ -57,6 +59,9 @@ fun CollectionContentScreen(
         hasMore = state.hasMore,
         onLoadMore = vm::loadMore,
         onBack = onBack,
+        // 头部「播放」= 整队替换(2026-10-15 用户反馈:播放歌单不该往旧队列里追加——
+        // 旧队列与合集的重复曲会让补全去重跳过,合集里那几首反而没进队)。点行仍=插播不换队。
+        onPlayAll = { loaded -> vm.playWithFill(0, { songs, _ -> onPlayQueue(songs) }, replace = true) },
         // 播放前先拉全量:否则大合集点播放只入列已加载的第一页(20 首)
         // 搜索期间播过滤子集(直接整队,不走 playWithFill——它的 loadingAll 护栏会
         // 吞掉搜索加载中的点击,且全量列表第 index 首与过滤子集第 index 首对不上,用户实测两 bug)
@@ -70,7 +75,13 @@ fun CollectionContentScreen(
                 else -> vm.playWithFill(index, onPlay)
             }
         },
-        onShuffle = { loaded -> vm.loadAll { all -> onShuffle(all) } },
+        // 随机播放:补全/加载全量进行中不能被 loadAll 护栏吞掉(与播放三分流同坑)——
+        // 此时把已加载部分就地洗牌整队替换(用户点的是「随机」不是「等全量」);
+        // 空闲时维持原策略:拉全量后洗(大合集随机要摇到全量)
+        onShuffle = { _ ->
+            if (loadingAll) onShuffle(state.songs.shuffled())
+            else vm.loadAll { all -> onShuffle(all) }
+        },
         currentMediaId = currentMediaId,
         isPlaying = isPlaying,
         onPlayNext = onPlayNext,
@@ -79,6 +90,7 @@ fun CollectionContentScreen(
         onDownload = onDownload,
         onRemoveSong = null,
         loadingAll = loadingAll,
+        loadingHint = if (loadingAll) "已加载 ${state.songs.size}/${state.total},补全中…" else null,
         onLoadAll = vm::loadAll,
         menuActions = listOf(
             "下载全部(已加载 " + state.songs.size.toString() + " 首)" to { onDownloadAll(state.songs) },

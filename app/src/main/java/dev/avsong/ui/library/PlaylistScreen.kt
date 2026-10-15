@@ -64,6 +64,7 @@ import coil3.compose.AsyncImage
 import dev.avsong.data.FavoriteRepository
 import dev.avsong.player.PlayerState
 import dev.avsong.ui.common.PlayingEqualizer
+import dev.avsong.ui.common.SkeletonGrid
 import dev.avsong.data.SavedCollection
 import dev.avsong.ui.common.FlatRefreshIndicator
 import dev.avsong.ui.login.LoginUiState
@@ -234,14 +235,9 @@ fun PlaylistScreen(
                 }
 
                 when {
-                    // 首次加载才铺全屏转圈;下拉刷新时(已有内容)保持列表可见,进度在顶部指示器
+                    // 首次加载才铺骨架;下拉刷新时(已有内容)保持列表可见,进度在顶部指示器
                     state.loading && !hasContent -> item(span = { GridItemSpan(maxLineSpan) }) {
-                        Box(
-                            Modifier.fillMaxWidth().padding(48.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                        }
+                        SkeletonGrid(rows = 3)
                     }
 
                     // 错误只在没有内容可展示时占屏;刷新失败时保留旧列表,不把用户内容换走

@@ -282,6 +282,8 @@ data class PlayerState(
     val artist: String? = null,
     val artworkUri: String? = null,
     val isPlaying: Boolean = false,
+    /** 正在缓冲(取链/加载中,STATE_BUFFERING):插播等待反馈用,迷你条播放键换成转圈。 */
+    val isBuffering: Boolean = false,
     val positionMs: Long = 0,
     val durationMs: Long = 0,
     val shuffleEnabled: Boolean = false,
@@ -320,6 +322,7 @@ internal fun MediaController.toState(): PlayerState {
         artist = meta.artist?.toString(),
         artworkUri = meta.artworkUri?.toString(),
         isPlaying = isPlaying,
+        isBuffering = playbackState == Player.STATE_BUFFERING,
         positionMs = currentPosition.coerceAtLeast(0),
         durationMs = if (duration > 0) duration else 0,
         shuffleEnabled = shuffleModeEnabled,
