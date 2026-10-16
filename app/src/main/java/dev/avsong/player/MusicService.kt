@@ -16,7 +16,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import dev.avsong.widget.NowPlayingWidget
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -254,8 +253,6 @@ class MusicService : MediaSessionService() {
                 )
             ) {
                 saveSnapshot(player)
-                // 桌面小组件同步刷新(与快照同一套事件+节流;广播触发 receiver 协程更新)
-                NowPlayingWidget.updateAll(this@MusicService)
             }
         }
     }
