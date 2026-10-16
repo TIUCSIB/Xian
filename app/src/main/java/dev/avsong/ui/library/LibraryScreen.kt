@@ -709,15 +709,20 @@ fun LoginEntryDialog(onDismiss: () -> Unit) {
                     }
                     Spacer(Modifier.width(4.dp))
                 }
-                Text(
-                    when {
-                        inQrView -> "扫码登录"
-                        view == LoginView.Cookie -> "手动填入 Cookie"
-                        else -> "Bilibili 账号"
-                    },
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.weight(1f),
-                )
+                // 已登录(结果页)不显示标题:只有头像+昵称,顶部仅留关闭键(用户要求)
+                if (loggedInState == null) {
+                    Text(
+                        when {
+                            inQrView -> "扫码登录"
+                            view == LoginView.Cookie -> "手动填入 Cookie"
+                            else -> "Bilibili 账号"
+                        },
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
                 IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
                     Icon(
                         Icons.Rounded.Close,
@@ -736,12 +741,7 @@ fun LoginEntryDialog(onDismiss: () -> Unit) {
                         onBack = { view = LoginView.Choose },
                     )
                 } else if (view != LoginView.Cookie && !inQrView) {
-                    // 方式选择页(设计稿版式):说明 + 登录方式按钮组
-                    Text(
-                        "扫码登录适合常规使用,支持哔哩哔哩 App 扫码确认。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    // 方式选择页(设计稿版式):登录方式按钮组(说明行已删,用户要求)
                     Spacer(Modifier.height(16.dp))
                     if (loggedInState != null) {
                         // 已登录:直接显示账号信息(可退出);有真实头像用头像,回退首字圆
@@ -803,11 +803,6 @@ fun LoginEntryDialog(onDismiss: () -> Unit) {
                             }
                             Spacer(Modifier.height(10.dp))
                             Text(s.status, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                            Text(
-                                "使用 B 站 App 扫码确认登录",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
                         }
 
                         LoginUiState.Expired -> {
