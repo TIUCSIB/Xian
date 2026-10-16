@@ -23,8 +23,10 @@ android {
 
     buildTypes {
         release {
+            // 本地验证阶段先复用 debug 签名(正式发布签名待定);R8 验证通过后再评估开 minify
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {
