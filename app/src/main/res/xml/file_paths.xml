@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自更新 APK 的 FileProvider 路径:下载落在外部缓存 files/update/ 下 -->
+<paths>
+    <files-path name="update" path="update/" />
+</paths>

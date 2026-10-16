@@ -2,6 +2,8 @@ package dev.avsong.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,6 +30,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,19 +44,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.avsong.BuildConfig
+import dev.avsong.data.update.AppUpdater
 import dev.avsong.ui.common.ThemedNoticeHost
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * 「关于」页(「我的」页存储组下方进入):项目介绍 + 版本信息 + 检查更新 + 项目主页。
  *
  * 检查更新 = 拉 GitHub releases/latest 的 tag 与本地 BuildConfig.VERSION_NAME 比对;
+ * 有新版时点「新版本」**应用内直接下载 APK(带进度)→ 拉起系统安装器**(AppUpdater)。
  * 本仓库无私有后端(纯客户端 app),更新源即 GitHub 发布页(仓库未公开时提示去主页看)。
- * 网络走 HttpURLConnection + IO 线程(BiliHttp 带 B 站头,这里不需要,不复用)。
  */
 @Composable
 fun AboutScreen(onBack: () -> Unit) {
@@ -61,34 +64,41 @@ fun AboutScreen(onBack: () -> Unit) {
     // 检查更新状态:idle=未检查 checking=进行中 latest=已是最新 found=有新版 failed=查不到
     var updateState by remember { mutableStateOf("idle") }
     var latestVersion by remember { mutableStateOf<String?>(null) }
+    // 新版 APK 直链(checkLatest 顺手从资产里抠出,下载用)
+    var latestApkUrl by remember { mutableStateOf<String?>(null) }
+    // 下载进度(AppUpdater.download 全局流:进页恢复显示,离页下载不中断)
+    val dl by AppUpdater.download.collectAsState()
     var notice by remember { mutableStateOf<String?>(null) }
 
     fun checkUpdate() {
         updateState = "checking"
         scope.launch {
-            val tag = withContext(Dispatchers.IO) {
-                runCatching {
-                    val conn = URL("https://api.github.com/repos/TIUCSIB/Xian/releases/latest")
-                        .openConnection() as HttpURLConnection
-                    conn.connectTimeout = 8_000
-                    conn.readTimeout = 8_000
-                    conn.setRequestProperty("Accept", "application/vnd.github+json")
-                    conn.inputStream.use { input ->
-                        // 只抠 tag 字段,不值得为一次检查引入 JSON 解析依赖
-                        Regex("\"tag_name\"\\s*:\\s*\"([^\"]+)\"")
-                            .find(input.bufferedReader().readText())?.groupValues?.get(1)
-                    }
-                }.onFailure { null }.getOrNull()
-            }
+            val latest = withContext(Dispatchers.IO) { AppUpdater.checkLatest() }
             when {
-                tag == null -> updateState = "failed"
-                tag.removePrefix("v") == BuildConfig.VERSION_NAME -> updateState = "latest"
+                latest == null -> updateState = "failed"
+                latest.version == BuildConfig.VERSION_NAME -> updateState = "latest"
                 else -> {
-                    latestVersion = tag.removePrefix("v")
+                    latestVersion = latest.version
+                    latestApkUrl = latest.apkUrl
                     updateState = "found"
                 }
             }
         }
+    }
+
+    /** 有新版时点「新版本」:开始下载(进度由 dl 流回显);done 自动拉起安装器。 */
+    fun startUpdate() {
+        val url = latestApkUrl ?: return
+        when (dl.status) {
+            "running" -> return
+            "done" -> AppUpdater.install(context)
+            else -> AppUpdater.downloadApk(context, url)
+        }
+    }
+
+    // 下载完成自动拉安装器(用户点一下就走完全程);失败提示就地回显
+    LaunchedEffect(dl.status) {
+        if (dl.status == "done") AppUpdater.install(context)
     }
 
     Column(
@@ -161,7 +171,11 @@ fun AboutScreen(onBack: () -> Unit) {
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable(enabled = updateState != "checking", onClick = ::checkUpdate)
+                        .clickable(
+                            enabled = updateState != "checking",
+                            // found=开始下载;下载中不重复触发;done=再点重拉安装器
+                            onClick = if (updateState == "found") ::startUpdate else ::checkUpdate,
+                        )
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -173,27 +187,60 @@ fun AboutScreen(onBack: () -> Unit) {
                     )
                     Spacer(Modifier.width(14.dp))
                     Text(
-                        "检查更新",
+                        // 下载中换文案,给「在干什么」的明确反馈
+                        when (dl.status) {
+                            "running" -> "正在下载更新…"
+                            "done" -> "下载完成,点按安装"
+                            else -> "检查更新"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.weight(1f),
                     )
-                    when (updateState) {
-                        "checking" -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        "latest" -> Text(
+                    when {
+                        updateState == "checking" -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        // 下载中:整型百分比 + 细进度条压在行底(见下方 Box 覆盖层)
+                        dl.status == "running" -> Text(
+                            "${dl.progress}%",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        dl.status == "failed" -> Text(
+                            "下载失败,点按重试",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        updateState == "latest" -> Text(
                             "已是最新",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        "found" -> Text(
+                        updateState == "found" -> Text(
                             "新版本 v$latestVersion",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.SemiBold,
                         )
-                        "failed" -> Text(
+                        updateState == "failed" -> Text(
                             "检查失败,点按重试",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                // 下载进度细条:纯色扁平,贴行底
+                if (dl.status == "running") {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(dl.progress / 100f)
+                                .fillMaxHeight()
+                                .background(MaterialTheme.colorScheme.primary),
                         )
                     }
                 }
