@@ -50,14 +50,14 @@ class LoginViewModel(val authStore: AuthStore) : ViewModel() {
                         if (a.canRefresh) {
                             when (val r = CookieRefresh.checkAndRefresh(a)) {
                                 is CookieRefresh.Result.Success -> {
-                                    android.util.Log.i("AvSongAuth", "cookie refreshed, SESSDATA rotated")
+                                    android.util.Log.d("AvSongAuth", "cookie refreshed, SESSDATA rotated")
                                     authStore.saveRefreshed(r.sessData, r.biliJct, r.dedeUserId, r.acTimeValue)
                                 }
                                 // NotNeeded(还新鲜)/ Failed(网络等):都不动本地状态,静默继续
-                                else -> android.util.Log.i("AvSongAuth", "cookie refresh skipped: $r")
+                                else -> android.util.Log.d("AvSongAuth", "cookie refresh skipped: $r")
                             }
                         } else {
-                            android.util.Log.i("AvSongAuth", "cookie refresh unavailable: no ac_time_value")
+                            android.util.Log.d("AvSongAuth", "cookie refresh unavailable: no ac_time_value")
                         }
                         // 刷新资料:硬币/等级是活数据,也兜底旧会话没存的头像等字段。
                         // ⚠ 会话已被服务端作废时(nav 回 -101)清本地登录态,回未登录 UI ——

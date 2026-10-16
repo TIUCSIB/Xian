@@ -56,6 +56,9 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
         val intro: String = "",
     )
 
+    /** 登录态速查(批量操作前置拦截用,避免 N 个请求全失败才发现没登录)。 */
+    val isLoggedIn: Boolean get() = auth.state.value.sessData != null
+
     private val mid: Long
         get() = auth.state.value.dedeUserId?.toLongOrNull()
             ?: throw IOException("请先登录 B 站账号")

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 及以下自动备份:同上,DataStore(含登录 Cookie)不备份 -->
+<full-backup-content>
+    <exclude domain="file" path="datastore/" />
+    <exclude domain="file" path="files/" />
+</full-backup-content>

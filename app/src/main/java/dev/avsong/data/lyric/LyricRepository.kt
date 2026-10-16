@@ -14,7 +14,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Request
 import java.io.IOException
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 歌词多源:
@@ -71,7 +70,16 @@ class LyricRepository {
     )
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
-    private val cache = ConcurrentHashMap<String, List<LyricLine>>()
+
+    /**
+     * 歌词缓存:LRU 上限 60 首——长会话听几百首时无界 ConcurrentHashMap 会一直涨
+     * (单份几十 KB,不致命但没必要);换源 applyCandidate 也写这里,淘汰即回退自动拉取。
+     * fetch 本身在 per-bvid Mutex 内读写,LinkedHashMap 非并发安全但已被互斥覆盖。
+     */
+    private val cache = object : LinkedHashMap<String, List<LyricLine>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<LyricLine>>): Boolean =
+            size > 60
+    }
     private val inFlight = mutableMapOf<String, Mutex>()
     private val inFlightGuard = Mutex()
 
@@ -361,11 +369,16 @@ class LyricRepository {
         val thirdPartyClient = okhttp3.OkHttpClient.Builder()
             .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-            .addInterceptor(
-                okhttp3.logging.HttpLoggingInterceptor().apply {
-                    level = okhttp3.logging.HttpLoggingInterceptor.Level.BASIC
-                },
-            )
+            // 同 BiliHttp:仅 debug 包挂日志(release 不泄漏请求行)
+            .apply {
+                if (dev.avsong.BuildConfig.DEBUG) {
+                    addInterceptor(
+                        okhttp3.logging.HttpLoggingInterceptor().apply {
+                            level = okhttp3.logging.HttpLoggingInterceptor.Level.BASIC
+                        },
+                    )
+                }
+            }
             .build()
     }
 }

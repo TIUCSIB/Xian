@@ -26,9 +26,14 @@ object BiliHttp {
     val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .addInterceptor(BiliHeaderInterceptor())
-            .addNetworkInterceptor(
-                HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC },
-            )
+            // 日志只在 debug 包挂载:BASIC 会打请求行(直链带有效期签名),release 不可泄漏
+            .apply {
+                if (dev.avsong.BuildConfig.DEBUG) {
+                    addNetworkInterceptor(
+                        HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC },
+                    )
+                }
+            }
             .build()
     }
 

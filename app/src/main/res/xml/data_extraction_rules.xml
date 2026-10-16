@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+:登录 Cookie 在 DataStore 里,云端备份/设备迁移一律排除(SESSDATA 等同登录凭据) -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="datastore/" />
+        <exclude domain="file" path="files/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="datastore/" />
+        <exclude domain="file" path="files/" />
+    </device-transfer>
+</data-extraction-rules>

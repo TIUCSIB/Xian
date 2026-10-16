@@ -731,6 +731,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                 danmakuMode = danmakuSettings.danmakuMode,
                 positionProvider = viewModel::currentPosition,
                 onLyricReplaced = { lines -> viewModel.replaceLyric(state.player.currentMediaId ?: "", lines) },
+                onAdjustLyric = viewModel::adjustLyricOffset,
                 lyricRepository = viewModel.lyricRepository,
                 getCsrf = { app.authStore.state.value.biliJct },
                 // 播放页爱心的本地歌单区:快照直接用当前播放曲的 PlayerState 字段拼

@@ -78,7 +78,8 @@ data class MainUiState(
 sealed interface LyricUiState {
     data object None : LyricUiState
     data object Loading : LyricUiState
-    data class Ready(val mediaId: String, val lines: List<LyricLine>) : LyricUiState
+    /** [offsetMs] = 用户手动校准的整体偏移(正=歌词延后),微调按钮每次 ±500ms。 */
+    data class Ready(val mediaId: String, val lines: List<LyricLine>, val offsetMs: Long = 0) : LyricUiState
 }
 
 class MainViewModel(
@@ -185,6 +186,25 @@ class MainViewModel(
     fun replaceLyric(bvid: String, lines: List<LyricLine>) {
         if (lastLyricMediaId != bvid || lines.isEmpty()) return
         _state.update { it.copy(lyric = LyricUiState.Ready(bvid, lines)) }
+    }
+
+    /**
+     * 歌词时间轴整体微调(±0.5s):歌词总比唱快/慢半拍时,用户在换源弹窗手动校准。
+     * 直接改写 Ready.lines 的时间戳(应用层偏移),offsetMs 记录当前偏移供 UI 回显;
+     * 换歌/换源后归零(候选自带偏差由换源前的时长校验兜着)。
+     */
+    fun adjustLyricOffset(deltaMs: Long) {
+        val cur = _state.value.lyric as? LyricUiState.Ready ?: return
+        val newOffset = (cur.offsetMs + deltaMs).coerceIn(-10_000, 10_000)
+        _state.update {
+            it.copy(
+                lyric = LyricUiState.Ready(
+                    mediaId = cur.mediaId,
+                    lines = cur.lines.map { l -> l.copy(timeMs = (l.timeMs + deltaMs).coerceAtLeast(0)) },
+                    offsetMs = newOffset,
+                ),
+            )
+        }
     }
 
     // ---------- 首页发现区 ----------
@@ -840,6 +860,11 @@ class MainViewModel(
      */
     fun favoriteFromQueue(entries: List<dev.avsong.player.QueueEntry>, folderIds: List<Long>) {
         if (entries.isEmpty() || folderIds.isEmpty()) return
+        // 未登录提前拦截:不然 N 首串行请求全失败后才看到汇总(F1 统一引导)
+        if (!favoriteRepository.isLoggedIn) {
+            _queueNotice.value = "收藏需要先登录 B 站账号"
+            return
+        }
         viewModelScope.launch {
             val addIds = folderIds.joinToString(",")
             var ok = 0

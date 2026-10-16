@@ -14,6 +14,8 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -29,13 +31,19 @@ class PlayerController(private val context: Context) {
     @Volatile
     private var controller: MediaController? = null
 
+    /** 连接建立互斥:快速连点时多个协程同时到这里,只建一个 controller,多余的泄漏连接(体检 P2)。 */
+    private val connectMutex = Mutex()
+
     /** 挂起直到 controller 就绪(首次会绑定服务)。不阻塞调用线程。 */
     private suspend fun controller(): MediaController = withContext(Dispatchers.IO) {
         controller?.let { if (it.isConnected) return@withContext it }
-        val token = SessionToken(context, ComponentName(context, MusicService::class.java))
-        val ctrl = MediaController.Builder(context, token).buildAsync().get()
-        controller = ctrl
-        ctrl
+        connectMutex.withLock {
+            controller?.let { if (it.isConnected) return@withLock it }
+            val token = SessionToken(context, ComponentName(context, MusicService::class.java))
+            val ctrl = MediaController.Builder(context, token).buildAsync().get()
+            controller = ctrl
+            ctrl
+        }
     }
 
     /** 已连接时同步执行,未连接则异步排队执行。 */

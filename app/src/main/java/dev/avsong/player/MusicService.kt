@@ -202,10 +202,6 @@ class MusicService : MediaSessionService() {
                 if (pl.isPlaying && dur != C.TIME_UNSET && dur > 0) {
                     val remain = dur - pl.currentPosition
                     if (remain in 1..FADE_OUT_MS) {
-                        android.util.Log.i(
-                            "BiliSongRepository",
-                            "crossfade: fade-out start ${pl.currentMediaItem?.mediaId} remain=${remain}ms",
-                        )
                         crossfadeFrom = pl.currentMediaItem
                         val ok = fadeOut(pl, remain)
                         if (ok) return@launch

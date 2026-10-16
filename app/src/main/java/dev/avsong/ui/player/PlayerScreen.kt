@@ -133,6 +133,8 @@ fun PlayerScreen(
     positionProvider: () -> Long = { state.positionMs },
     /** 换源应用后回调:把新歌词写回 VM 的 LyricUiState(Repository 缓存已更新)。 */
     onLyricReplaced: (List<dev.avsong.data.lyric.LyricLine>) -> Unit = {},
+    /** 歌词整体微调(±0.5s,换源弹窗底部校准行)。 */
+    onAdjustLyric: (Long) -> Unit = {},
     /** 换源候选列表/应用:LyricRepository 实例(AvSongApp 从 VM 取传入)。 */
     lyricRepository: dev.avsong.data.lyric.LyricRepository? = null,
     /** 热评点赞要 bili_jct;null/空 = 未登录,点赞钮提示去登录。 */
@@ -736,6 +738,31 @@ fun PlayerScreen(
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
                     )
+                    // 时间轴微调:歌词总比唱快/慢半拍时手动校准(应用层整体偏移,随时可点)
+                    Row(
+                        Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "时间轴校准",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        listOf(-500L, 500L).forEach { delta ->
+                            Text(
+                                if (delta < 0) "-0.5s" else "+0.5s",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .padding(start = 8.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                                    .clickable { onAdjustLyric(delta) }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
                     when {
                         candidates == null && loadError == null -> Box(
                             Modifier.fillMaxWidth().padding(vertical = 40.dp),
