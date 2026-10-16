@@ -1,7 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="100%" role="img" aria-label="AvSong — B 站音乐播放器,波形进度条视觉"><title>AvSong — 把 B 站变成你的音乐播放器</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="100%" role="img" aria-label="弦 Xian — 基于 B 站的安卓音乐播放器">
+<title>弦 Xian — 基于 B 站的安卓音乐播放器</title>
 <rect width="1200" height="420" rx="24" fill="#0F1115"/>
-<text x="72" y="168" font-family="PingFang SC, Noto Sans SC, Microsoft YaHei, sans-serif" font-size="84" font-weight="700" fill="#F2F3F5">AvSong</text>
-<text x="74" y="222" font-family="PingFang SC, Noto Sans SC, Microsoft YaHei, sans-serif" font-size="27" font-weight="500" fill="#8B93A1">把 B 站变成你的音乐播放器</text>
+<text x="72" y="168" font-family="PingFang SC, Noto Sans SC, Microsoft YaHei, sans-serif" font-size="84" font-weight="700" fill="#F2F3F5">弦 <tspan font-size="72">Xian</tspan></text>
+<text x="74" y="222" font-family="PingFang SC, Noto Sans SC, Microsoft YaHei, sans-serif" font-size="27" font-weight="500" fill="#8B93A1">把散落在 B 站的声音捡起来</text>
 <rect x="74" y="258" rx="14" width="124" height="30" fill="#1B1F27"/>
 <text x="88" y="278" font-family="PingFang SC, Noto Sans SC, sans-serif" font-size="16" fill="#FFD24D">纯客户端</text>
 <rect x="210" y="258" rx="14" width="124" height="30" fill="#1B1F27"/>

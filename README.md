@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/readme/hero.svg" alt="AvSong — 把 B 站变成你的音乐播放器" width="100%">
+<img src="assets/readme/hero.svg" alt="弦 Xian — 把散落在 B 站的声音捡起来" width="100%">
 
 <p>
   <img alt="Android" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white">
@@ -13,7 +13,7 @@
 
 ## 这是什么
 
-**AvSong 是一个基于 B 站公开 API 的安卓音乐播放器**：搜索、热歌榜、收藏夹、UP 主合集、离线下载、逐字歌词、热评弹幕——把一个视频网站当成音乐 App 来用。
+**弦 Xian 是一个基于 B 站公开 API 的安卓音乐播放器**：搜索、热歌榜、收藏夹、UP 主合集、离线下载、逐字歌词、热评弹幕——把一个视频网站当成音乐 App 来用。
 
 纯客户端、匿名可用、无后端。不缓存任何音频直链（B 站直链约 3 小时过期，播放时实时解析），不需要注册账号也能听。
 
@@ -83,6 +83,7 @@ UI (Compose) ── MainViewModel ── PlayerController ── MusicService (M
 
 ## 说明
 
+- 「弦」= 一根弦是一个音——把散落在 B 站视频里的好听声音捡起来，「发现好歌、听到好歌」都在一处；
 - 本项目仅用于个人学习与自用，**不提供任何内容托管**，所有数据来自 B 站公开 API；
 - 请遵守 B 站用户协议，不要用于商业用途或大规模抓取；
 - 未做：本地音频文件扫描、下载目录自定义、播放上报。
