@@ -22,3 +22,4 @@ gen_assets.py
 # README 本地预览临时文件
 .hero_preview.html
 .hero_shot.png
+.readme_check.png
