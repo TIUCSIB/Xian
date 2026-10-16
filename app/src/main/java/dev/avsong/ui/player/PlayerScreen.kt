@@ -43,10 +43,15 @@ import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Subtitles
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -71,6 +76,7 @@ import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -412,7 +418,8 @@ fun PlayerScreen(
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            // 走马灯:搬运标题动辄四五十字,截断后歌名根本看不见(用户要求滚动展示)
+                            modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
@@ -715,6 +722,27 @@ fun PlayerScreen(
                     mutableStateOf<List<dev.avsong.data.lyric.LyricCandidate>?>(null)
                 }
                 var loadError by remember(bvid) { mutableStateOf<String?>(null) }
+                // 手动搜索(自动查询词搜不到/搜错了自己来):结果非空时列表整体切到手动结果
+                var manualQuery by remember(bvid) { mutableStateOf("") }
+                var manualSearching by remember(bvid) { mutableStateOf(false) }
+                var manualCandidates by remember(bvid) { mutableStateOf<List<dev.avsong.data.lyric.LyricCandidate>?>(null) }
+                var manualError by remember(bvid) { mutableStateOf<String?>(null) }
+                fun runManualSearch() {
+                    val kw = manualQuery.trim()
+                    if (kw.isEmpty() || manualSearching) return
+                    manualSearching = true
+                    manualError = null
+                    scope.launch {
+                        try {
+                            manualCandidates = lyricRepository?.searchCandidates(kw, state.durationMs / 1000)
+                            if (manualCandidates?.isEmpty() == true) manualError = "没搜到「$kw」的歌词"
+                        } catch (e: Exception) {
+                            manualError = e.message ?: "搜索失败"
+                        } finally {
+                            manualSearching = false
+                        }
+                    }
+                }
                 // 拉候选:进弹窗一次性收集三源(每源内部已限个数,总时长可控)
                 LaunchedEffect(bvid) {
                     if (candidates == null && bvid.isNotBlank()) {
@@ -763,14 +791,74 @@ fun PlayerScreen(
                             )
                         }
                     }
+                    // 手动搜索框:自动查询词是搬运标题时经常搜不对(嵌套书名号/长标题),
+                    // 用户自己敲真歌名最直接;键盘 Search 触发,清空回退自动候选
+                    Row(
+                        Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextField(
+                            value = manualQuery,
+                            onValueChange = {
+                                manualQuery = it
+                                if (it.isBlank()) {
+                                    manualCandidates = null
+                                    manualError = null
+                                }
+                            },
+                            placeholder = {
+                                Text(
+                                    "自己搜:输入歌名(可带歌手)",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { runManualSearch() }),
+                            modifier = Modifier.weight(1f),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                cursorColor = MaterialTheme.colorScheme.primary,
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            ),
+                        )
+                        if (manualSearching) {
+                            CircularProgressIndicator(
+                                Modifier.size(22.dp).padding(start = 8.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        }
+                    }
                     when {
+                        manualError != null -> Text(
+                            manualError!!,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 24.dp),
+                        )
+
+                        manualCandidates != null -> Column {
+                            manualCandidates!!.forEach { c ->
+                                LyricCandidateRow(c) {
+                                    lyricRepository!!.applyCandidate(bvid, c)
+                                    onLyricReplaced(c.lines)
+                                    showLyricPicker = false
+                                }
+                            }
+                        }
+
                         candidates == null && loadError == null -> Box(
                             Modifier.fillMaxWidth().padding(vertical = 40.dp),
                             contentAlignment = Alignment.Center,
                         ) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp) }
 
                         candidates?.isEmpty() == true || (loadError != null && candidates == null) -> Text(
-                            loadError ?: "没有找到其他歌词源",
+                            loadError ?: "没有找到其他歌词源,试试上面的自己搜",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(vertical = 24.dp),
@@ -778,39 +866,10 @@ fun PlayerScreen(
 
                         else -> Column {
                             candidates!!.forEach { c ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable {
-                                            lyricRepository!!.applyCandidate(bvid, c)
-                                            onLyricReplaced(c.lines)
-                                            showLyricPicker = false
-                                        }
-                                        .padding(vertical = 10.dp, horizontal = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text(
-                                            "${c.source} · ${c.lines.size} 行",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            fontWeight = FontWeight.SemiBold,
-                                        )
-                                        Text(
-                                            c.displayTitle,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-                                    if (c.durationDeltaSec != 0L) {
-                                        Text(
-                                            (if (c.durationDeltaSec > 0) "+" else "") + "${c.durationDeltaSec}s",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
+                                LyricCandidateRow(c) {
+                                    lyricRepository!!.applyCandidate(bvid, c)
+                                    onLyricReplaced(c.lines)
+                                    showLyricPicker = false
                                 }
                             }
                         }
@@ -843,6 +902,43 @@ fun PlayerScreen(
                     onDismiss = { showFavPicker = false },
                 )
             }
+        }
+    }
+}
+
+/**
+ * 换源候选行(自动候选与手动搜索结果共用):来源+行数、标题/歌手、时长偏差角标。
+ */
+@Composable
+private fun LyricCandidateRow(c: dev.avsong.data.lyric.LyricCandidate, onApply: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onApply)
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                "${c.source} · ${c.lines.size} 行",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                c.displayTitle,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (c.durationDeltaSec != 0L) {
+            Text(
+                (if (c.durationDeltaSec > 0) "+" else "") + "${c.durationDeltaSec}s",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

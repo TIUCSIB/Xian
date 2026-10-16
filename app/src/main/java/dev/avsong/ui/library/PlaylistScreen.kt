@@ -563,6 +563,9 @@ private fun PlaylistRow(
             )
         }
         Spacer(Modifier.width(8.dp))
+        // 行尾区:chevron/播放态 + 长按菜单的锚点(DropdownMenu 必须锚在行内 Box 上,
+        // 游离在函数尾部会弹到屏幕左下角——2026-10-16 用户实测)
+        Box {
         if (isCurrent) {
             // 正在播本歌单:chevron 位换播放态控件(音波条=播放中,三角=暂停;点击=暂停/续播)
             Box(
@@ -595,10 +598,7 @@ private fun PlaylistRow(
                 modifier = Modifier.size(22.dp),
             )
         }
-    }
-    // 长按菜单
-    if (menuExpanded) {
-        DropdownMenu(expanded = true, onDismissRequest = { menuExpanded = false }) {
+        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
             menuActions.forEach { (label, action) ->
                 DropdownMenuItem(
                     text = { Text(label) },
@@ -608,6 +608,7 @@ private fun PlaylistRow(
                     },
                 )
             }
+        }
         }
     }
 }

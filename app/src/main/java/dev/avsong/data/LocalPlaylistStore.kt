@@ -88,9 +88,14 @@ class LocalPlaylistStore(context: Context) {
         return true
     }
 
-    suspend fun removeSong(id: Long, bvid: String) {
+    suspend fun removeSong(id: Long, bvid: String) = removeSongs(id, listOf(bvid))
+
+    /** 批量移除:一次 persist 一次 StateFlow 发射——逐首调 removeSong 会 N 次重组,列表抖动。 */
+    suspend fun removeSongs(id: Long, bvids: Collection<String>) {
+        if (bvids.isEmpty()) return
+        val set = bvids.toSet()
         persist(_playlists.value.map {
-            if (it.id == id) it.copy(tracks = it.tracks.filterNot { t -> t.bvid == bvid }) else it
+            if (it.id == id) it.copy(tracks = it.tracks.filterNot { t -> t.bvid in set }) else it
         })
     }
 

@@ -88,7 +88,7 @@ fun LocalPlaylistContentScreen(
             onFavorite = { songs -> showBatchFav = songs },
             onPlayNext = onPlayNextBatch,
             onAddToQueue = onAddToQueueBatch,
-            onRemove = { songs -> songs.forEach { viewModel.removeSongFromLocalPlaylist(playlistId, it.bvid) } },
+            onRemove = { songs -> viewModel.removeSongsFromLocalPlaylist(playlistId, songs.map { it.bvid }) },
             removeLabel = "从歌单移除",
         ),
         menuActions = listOf(

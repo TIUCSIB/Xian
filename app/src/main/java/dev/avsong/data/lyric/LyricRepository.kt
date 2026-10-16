@@ -6,6 +6,7 @@ import dev.avsong.data.remote.PlayerV2Response
 import dev.avsong.data.remote.SubtitleBody
 import dev.avsong.data.remote.ViewResponse
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.Dispatchers
@@ -326,9 +327,16 @@ class LyricRepository {
     internal fun buildQueries(title: String, artist: String, bgmTitle: String?, bgmSinger: String?): List<String> {
         val titles = buildList {
             bgmTitle?.let { add(it) }
-            // 「"歌词片段"-歌手《歌名》」式搬运标题:《》里才是真歌名(cleanTitle 会把尾巴整段砍掉,
-            // 反而丢了歌名),单独提取作高优先候选
-            Regex("《(.+?)》").find(title)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }?.let { add(it) }
+            // 《》提取:嵌套书名号(《剪(电视剧《雁回时》ost)》)用**最外层**贪心配对,
+            // 非贪婪 `《(.+?)》` 会截出「剪(电视剧《雁回时」半截词,搜出来必然不对;
+            // 外层内容 cleanTitle 砍掉(剧名ost)括注得真歌名「剪」。cleanTitle 无缩短
+            // (《A》《B》双书名号的外层=A》《B)说明没嵌套,跳过别占查询名额
+            Regex("《(.+)》").find(title)?.groupValues?.get(1)?.let { outer ->
+                val cleaned = outer.cleanTitle().trim()
+                if (cleaned.isNotBlank() && cleaned != outer.trim()) add(cleaned)
+            }
+            // 内层书名号逐个抠(非嵌套《歌名》、双书名号《A》《B》、剧名《雁回时》兜底)
+            Regex("《([^《》]+)》").findAll(title).forEach { add(it.groupValues[1].trim()) }
             add(title)
             title.cleanTitle().let { if (it != title) add(it) }
         }.distinct()
@@ -358,13 +366,67 @@ class LyricRepository {
 
     // ---------- 网易云 ----------
 
-    private fun neteaseSearch(keyword: String): List<NeteaseSong> {
+    private fun neteaseSearch(keyword: String, limit: Int = 5): List<NeteaseSong> {
         val url = "https://music.163.com/api/search/get/web" +
-            "?s=${java.net.URLEncoder.encode(keyword, "UTF-8")}&type=1&offset=0&limit=5"
+            "?s=${java.net.URLEncoder.encode(keyword, "UTF-8")}&type=1&offset=0&limit=$limit"
         return runCatching {
             json.decodeFromString<NeteaseSearchResponse>(get(url, referer = "https://music.163.com/", client = thirdPartyClient)).result?.songs.orEmpty()
         }.getOrDefault(emptyList())
     }
+
+    // ---------- 手动搜索(换源弹窗「自己搜」) ----------
+
+    /**
+     * 用户手动输入关键词搜歌词:网易云 + lrclib 两源并行。
+     * 手动搜索**不硬卡 ±15s 时长**(用户可能就是在找剪辑版/不同版本的视频词),
+     * 只按 |偏差| 排序让最接近的排前;每源取前若干条,网易云逐条取词(轻请求)。
+     */
+    suspend fun searchCandidates(
+        keyword: String,
+        durationSec: Long,
+    ): List<LyricCandidate> = withContext(Dispatchers.IO) { coroutineScope {
+        if (keyword.isBlank()) return@coroutineScope emptyList()
+        val netease = async {
+            neteaseSearch(keyword, limit = 10).map { s ->
+                async {
+                    val lyric = neteaseLyric(s.id) ?: return@async null
+                    val lines = parseLrc(lyric.first)
+                    if (lines.isEmpty()) return@async null
+                    val trans = lyric.second
+                    val merged = if (trans != null) mergeTranslation(lines, parseLrc(trans)) else lines
+                    LyricCandidate(
+                        source = "网易云",
+                        remoteId = s.id.toString(),
+                        displayTitle = listOf(s.name, s.artists?.joinToString(",") { it.name })
+                            .filterNotNull().filter { it.isNotBlank() }.joinToString(" / ")
+                            .ifBlank { keyword },
+                        lines = merged,
+                        durationDeltaSec = (s.duration / 1000 - durationSec),
+                    )
+                }
+            }.awaitAll().filterNotNull()
+                .let { list -> if (durationSec > 0) list.filter { kotlin.math.abs(it.durationDeltaSec) <= 30 }.take(5) else list.take(5) }
+        }
+        val lrc = async {
+            lrclibTracks(keyword).filter { !it.syncedLyrics.isNullOrBlank() }
+                .let { list ->
+                    if (durationSec > 0) list.sortedBy { t -> kotlin.math.abs(t.duration.toLong() - durationSec) } else list
+                }
+                .take(3)
+                .map { t ->
+                    LyricCandidate(
+                        source = "lrclib",
+                        remoteId = "",
+                        displayTitle = t.trackName + " / " + t.artistName,
+                        lines = parseLrc(t.syncedLyrics!!),
+                        durationDeltaSec = (t.duration.toLong() - durationSec),
+                    )
+                }
+        }
+        (netease.await() + lrc.await())
+            .distinctBy { it.source + it.displayTitle }
+            .sortedBy { kotlin.math.abs(it.durationDeltaSec) }
+    } }
 
     private fun neteaseLyric(songId: Long): Pair<String, String?>? = runCatching {
         val url = "https://music.163.com/api/song/lyric?id=$songId&lv=1&kv=1&tv=-1"

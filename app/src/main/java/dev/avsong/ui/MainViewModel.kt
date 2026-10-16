@@ -641,6 +641,11 @@ class MainViewModel(
         viewModelScope.launch { localPlaylistStore.removeSong(playlistId, bvid) }
     }
 
+    /** 批量移除(多选操作栏):一次 persist 一次重组,逐首调会把列表抖成筛子。 */
+    fun removeSongsFromLocalPlaylist(playlistId: Long, bvids: List<String>) {
+        viewModelScope.launch { localPlaylistStore.removeSongs(playlistId, bvids) }
+    }
+
     /**
      * 一键取消收藏(播放页亮爱心点击,2026-10-15):B 站所有已收藏夹移出 + 所有本地歌单移出。
      * 反馈经 pushNotice(成功/失败都要说,静默会像没点上)。

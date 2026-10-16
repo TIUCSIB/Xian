@@ -92,7 +92,7 @@ fun FolderContentScreen(
             onFavorite = { songs -> showBatchFav = songs },
             onPlayNext = onPlayNextBatch,
             onAddToQueue = onAddToQueueBatch,
-            onRemove = { songs -> songs.forEach { vm.removeFromFolder(it) } },
+            onRemove = { songs -> vm.removeFromFolder(songs) },
             removeLabel = "从收藏夹移除",
         ),
         menuActions = listOf(

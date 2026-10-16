@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -120,9 +121,10 @@ fun MiniPlayerBar(
             state.title ?: "",
             style = MaterialTheme.typography.bodyMedium,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            // 走马灯:超长标题(合集搬运常见)截断后只剩前几个字,滚动才能看全
             modifier = Modifier
                 .weight(1f)
+                .basicMarquee(iterations = Int.MAX_VALUE)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,

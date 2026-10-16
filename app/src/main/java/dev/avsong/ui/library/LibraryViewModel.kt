@@ -336,15 +336,36 @@ class FolderContentViewModel(
         _state.update { it.copy(actionError = null) }
     }
 
-    /** 从本收藏夹移除(不删原视频)。 */
-    fun removeFromFolder(song: Song, onDone: () -> Unit = {}) {
+    /** 从本收藏夹移除(不删原视频)。单首入口,委托批量。 */
+    fun removeFromFolder(song: Song, onDone: () -> Unit = {}) = removeFromFolder(listOf(song), onDone)
+
+    /**
+     * 移除(单首/批量):**先乐观摘除**,列表一次性缩掉——原实现逐首 load() 会整页闪
+     * spinner + 回第一页,批量时列表一抖一抖(用户实测)。之后逐首 modify(300ms 间隔防
+     * -412);有失败就地报错并重拉对账,全成功不再 load()(state 已与服务端一致,重拉
+     * 反而重置分页)。
+     */
+    fun removeFromFolder(songs: List<Song>, onDone: () -> Unit = {}) {
+        if (songs.isEmpty()) return
         viewModelScope.launch {
-            val aid = ensureAid(song)
-            if (aid > 0) {
-                runCatching { favRepo.modify(aid, delIds = folderId.toString()) }
+            val bvids = songs.map { it.bvid }.toSet()
+            _state.update { it.copy(songs = it.songs.filterNot { s -> s.bvid in bvids }) }
+            var fail = 0
+            for ((i, song) in songs.withIndex()) {
+                if (i > 0) delay(300)
+                try {
+                    val aid = ensureAid(song)
+                    if (aid <= 0) throw java.io.IOException("取 aid 失败")
+                    favRepo.modify(aid, delIds = folderId.toString())
+                } catch (e: Exception) {
+                    fail++
+                }
             }
             onDone()
-            load()
+            if (fail > 0) {
+                _state.update { it.copy(actionError = "有 $fail 首移除失败,已刷新列表") }
+                load()
+            }
         }
     }
 

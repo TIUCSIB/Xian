@@ -3,6 +3,7 @@ package dev.avsong.ui.queue
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -202,7 +203,7 @@ private fun QueueRow(
             }
         }
         Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
             Text(
                 entry.title,
                 style = MaterialTheme.typography.bodyMedium,
@@ -211,13 +212,16 @@ private fun QueueRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                entry.artist,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // 无歌手不渲染空行:Row 已 CenterVertically,空 Text 会把标题顶到上半格(用户反馈不居中)
+            if (entry.artist.isNotBlank()) {
+                Text(
+                    entry.artist,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         // 上移 / 下移(排序,迷你条抽屉不显示)/ 移除:多选模式下全隐藏(防误触,行点击已是勾选)
         if (!selectionMode) {
