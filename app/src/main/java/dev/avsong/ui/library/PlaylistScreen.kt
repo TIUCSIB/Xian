@@ -70,7 +70,7 @@ import coil3.compose.AsyncImage
 import dev.avsong.data.FavoriteRepository
 import dev.avsong.player.PlayerState
 import dev.avsong.ui.common.PlayingEqualizer
-import dev.avsong.ui.common.SkeletonGrid
+import dev.avsong.ui.common.SkeletonPlaylistRows
 import dev.avsong.data.SavedCollection
 import dev.avsong.ui.common.FlatRefreshIndicator
 import dev.avsong.ui.login.LoginUiState
@@ -265,7 +265,7 @@ fun PlaylistScreen(
                             val hasNet = allCollections.isNotEmpty() || allFolders.isNotEmpty()
                             // 加载中且什么都没有:骨架
                             if (state.loading && !hasNet) {
-                                item { SkeletonGrid(rows = 4) }
+                                item { SkeletonPlaylistRows(rows = 6) }
                             } else if (state.error != null && !hasNet) {
                                 item {
                                     Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {

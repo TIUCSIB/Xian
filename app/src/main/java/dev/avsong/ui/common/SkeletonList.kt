@@ -97,12 +97,12 @@ fun SkeletonList(
 }
 
 /**
- * 网格骨架:歌单中心两列卡片占位(方块封面 + 标题条),与 PlaylistCard 同构。
- * 复用同一呼吸 alpha 的视觉语言;[rows] 行 × 2 列。
+ * 歌单页骨架(2026-10-16):匹配 PlaylistRow 的列表行结构(56dp 方图 + 标题条 + 「N 首」条),
+ * 而不是旧的两列网格卡。歌单页从网格改列表行后,SkeletonGrid 已不匹配(用户实测:骨架样式不对)。
  */
 @Composable
-fun SkeletonGrid(
-    rows: Int = 3,
+fun SkeletonPlaylistRows(
+    rows: Int = 6,
     modifier: Modifier = Modifier,
 ) {
     val transition = rememberInfiniteTransition(label = "skeleton")
@@ -122,27 +122,32 @@ fun SkeletonGrid(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                repeat(2) {
-                    Column(Modifier.weight(1f)) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(170.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(blockColor.copy(alpha = alpha)),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Box(
-                            Modifier
-                                .fillMaxWidth(0.8f)
-                                .height(14.dp)
-                                .clip(RoundedCornerShape(7.dp))
-                                .background(blockColor.copy(alpha = alpha)),
-                        )
-                    }
+                Box(
+                    Modifier
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(blockColor.copy(alpha = alpha)),
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(0.55f)
+                            .height(16.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(blockColor.copy(alpha = alpha)),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Box(
+                        Modifier
+                            .fillMaxWidth(0.25f)
+                            .height(12.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(blockColor.copy(alpha = alpha)),
+                    )
                 }
             }
         }
