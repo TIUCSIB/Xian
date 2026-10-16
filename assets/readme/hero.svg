@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="100%" role="img" aria-label="AvSong — B 站音乐播放器,波形进度条视觉"><title>AvSong — 把 B 站变成你的音乐播放器</title>
+<rect width="1200" height="420" rx="24" fill="#0F1115"/>
+<text x="72" y="168" font-family="PingFang SC, Noto Sans SC, Microsoft YaHei, sans-serif" font-size="84" font-weight="700" fill="#F2F3F5">AvSong</text>
+<text x="74" y="222" font-family="PingFang SC, Noto Sans SC, Microsoft YaHei, sans-serif" font-size="27" font-weight="500" fill="#8B93A1">把 B 站变成你的音乐播放器</text>
+<rect x="74" y="258" rx="14" width="124" height="30" fill="#1B1F27"/>
+<text x="88" y="278" font-family="PingFang SC, Noto Sans SC, sans-serif" font-size="16" fill="#FFD24D">纯客户端</text>
+<rect x="210" y="258" rx="14" width="124" height="30" fill="#1B1F27"/>
+<text x="224" y="278" font-family="PingFang SC, Noto Sans SC, sans-serif" font-size="16" fill="#FFD24D">匿名可用</text>
+<rect x="346" y="258" rx="14" width="124" height="30" fill="#1B1F27"/>
+<text x="360" y="278" font-family="PingFang SC, Noto Sans SC, sans-serif" font-size="16" fill="#FFD24D">无后端</text>
+<text x="74" y="340" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="17" fill="#5C6470">Kotlin · Jetpack Compose · Media3</text>
+<rect x="600" y="181.3" width="7" height="37.4" rx="3.5" fill="#FFD24D"/>
+<rect x="612" y="176.8" width="7" height="46.4" rx="3.5" fill="#FFD24D"/>
+<rect x="624" y="169.8" width="7" height="60.4" rx="3.5" fill="#FFD24D"/>
+<rect x="636" y="177.2" width="7" height="45.7" rx="3.5" fill="#FFD24D"/>
+<rect x="648" y="174.6" width="7" height="50.9" rx="3.5" fill="#FFD24D"/>
+<rect x="660" y="175.8" width="7" height="48.3" rx="3.5" fill="#FFD24D"/>
+<rect x="672" y="173.7" width="7" height="52.6" rx="3.5" fill="#FFD24D"/>
+<rect x="684" y="174.9" width="7" height="50.2" rx="3.5" fill="#FFD24D"/>
+<rect x="696" y="173.1" width="7" height="53.9" rx="3.5" fill="#FFD24D"/>
+<rect x="708" y="168.8" width="7" height="62.3" rx="3.5" fill="#FFD24D"/>
+<rect x="720" y="163.6" width="7" height="72.9" rx="3.5" fill="#FFD24D"/>
+<rect x="732" y="169.5" width="7" height="61.0" rx="3.5" fill="#FFD24D"/>
+<rect x="744" y="176.1" width="7" height="47.8" rx="3.5" fill="#FFD24D"/>
+<rect x="756" y="178.2" width="7" height="43.6" rx="3.5" fill="#FFD24D"/>
+<rect x="768" y="176.8" width="7" height="46.4" rx="3.5" fill="#FFD24D"/>
+<rect x="780" y="184.6" width="7" height="30.9" rx="3.5" fill="#FFD24D"/>
+<rect x="792" y="190.7" width="7" height="18.7" rx="3.5" fill="#FFD24D"/>
+<rect x="804" y="182.2" width="7" height="35.6" rx="3.5" fill="#FFD24D"/>
+<rect x="816" y="187.3" width="7" height="25.4" rx="3.5" fill="#FFD24D"/>
+<rect x="828" y="193.0" width="7" height="14" rx="3.5" fill="#2A2F3A"/>
+<rect x="840" y="193.0" width="7" height="14" rx="3.5" fill="#2A2F3A"/>
+<rect x="852" y="193.0" width="7" height="14" rx="3.5" fill="#2A2F3A"/>
+<rect x="864" y="185.4" width="7" height="29.1" rx="3.5" fill="#2A2F3A"/>
+<rect x="876" y="193.0" width="7" height="14" rx="3.5" fill="#2A2F3A"/>
+<rect x="888" y="188.2" width="7" height="23.7" rx="3.5" fill="#2A2F3A"/>
+<rect x="900" y="181.6" width="7" height="36.8" rx="3.5" fill="#2A2F3A"/>
+<rect x="912" y="192.6" width="7" height="14.9" rx="3.5" fill="#2A2F3A"/>
+<rect x="924" y="185.2" width="7" height="29.6" rx="3.5" fill="#2A2F3A"/>
+<rect x="936" y="181.3" width="7" height="37.3" rx="3.5" fill="#2A2F3A"/>
+<rect x="948" y="172.6" width="7" height="54.9" rx="3.5" fill="#2A2F3A"/>
+<rect x="960" y="180.2" width="7" height="39.7" rx="3.5" fill="#2A2F3A"/>
+<rect x="972" y="176.8" width="7" height="46.4" rx="3.5" fill="#2A2F3A"/>
+<rect x="984" y="174.9" width="7" height="50.2" rx="3.5" fill="#2A2F3A"/>
+<rect x="996" y="176.1" width="7" height="47.8" rx="3.5" fill="#2A2F3A"/>
+<rect x="1008" y="166.2" width="7" height="67.6" rx="3.5" fill="#2A2F3A"/>
+<rect x="1020" y="163.7" width="7" height="72.7" rx="3.5" fill="#2A2F3A"/>
+<rect x="1032" y="168.9" width="7" height="62.1" rx="3.5" fill="#2A2F3A"/>
+<rect x="1044" y="175.2" width="7" height="49.7" rx="3.5" fill="#2A2F3A"/>
+<rect x="1056" y="166.8" width="7" height="66.4" rx="3.5" fill="#2A2F3A"/>
+<rect x="1068" y="168.2" width="7" height="63.7" rx="3.5" fill="#2A2F3A"/>
+<rect x="1080" y="171.3" width="7" height="57.3" rx="3.5" fill="#2A2F3A"/>
+<rect x="1092" y="178.3" width="7" height="43.4" rx="3.5" fill="#2A2F3A"/>
+<rect x="1104" y="173.8" width="7" height="52.3" rx="3.5" fill="#2A2F3A"/>
+<rect x="1116" y="179.3" width="7" height="41.4" rx="3.5" fill="#2A2F3A"/>
+<text x="600" y="298" font-family="ui-monospace, Consolas, monospace" font-size="19" fill="#8B93A1">01:26</text>
+<text x="1123" y="298" text-anchor="end" font-family="ui-monospace, Consolas, monospace" font-size="19" fill="#8B93A1">03:39</text>
+<circle cx="556" cy="200" r="30" fill="#FFD24D"/>
+<path d="M 548 189 l 18 11 l -18 11 z" fill="#0F1115"/>
+</svg>
