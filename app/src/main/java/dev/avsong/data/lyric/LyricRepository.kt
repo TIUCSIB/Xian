@@ -5,6 +5,9 @@ import dev.avsong.data.BiliHttp
 import dev.avsong.data.remote.PlayerV2Response
 import dev.avsong.data.remote.SubtitleBody
 import dev.avsong.data.remote.ViewResponse
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -101,8 +104,8 @@ class LyricRepository {
 
     /**
      * 手动换源(用户点名「词不对」时自己挑):
-     * 把三源全部候选收集成列表(网易云多查询命中/_lrclib 命中/B 站字幕),
-     * 每项带来源标签、标题/歌手预览、行数、时长偏差——UI 据此渲染候选单。
+     * 三源**并行**收集候选(网易云多查询/lrclib 多查询/B 站字幕互不依赖,串行要 5-10s,
+     * 并行后压到最慢一路的耗时);每项带来源标签、标题/歌手预览、行数、时长偏差。
      * [LyricCandidate.lyrics] 在收集时立即取词(网易云取词很快,且 lrclib 响应自带;
      * 只对能取到词的候选填,取不到的跳过不进列表)。
      */
@@ -111,55 +114,106 @@ class LyricRepository {
         title: String,
         artist: String,
         durationSec: Long = 0,
-    ): List<LyricCandidate> = withContext(Dispatchers.IO) {
-        val ctx = runCatching { biliContext(bvid) }.getOrNull()
-        val candidates = buildQueries(title, artist, ctx?.bgmTitle, ctx?.bgmSinger)
+    ): List<LyricCandidate> = withContext(Dispatchers.IO) { coroutineScope {
+        val ctxDeferred = async { runCatching { biliContext(bvid) }.getOrNull() }
+        // 网易云与 lrclib 不依赖 ctx(直接用歌名/歌手查询),先行并行;B 站字幕等 ctx
+        val neteaseDeferred = async {
+            // 逐查询词搜索,词之间也并发(每词内部:search→lyric 串行,取词很轻)
+            val queries = buildQueries(title, artist, null, null).take(4)
+            val found = mutableListOf<LyricCandidate>()
+            queries.map { q ->
+                async {
+                    if (found.size >= 4) return@async
+                    val s = neteaseSearch(q).firstOrNull {
+                        durationSec <= 0 || kotlin.math.abs(it.duration / 1000 - durationSec) <= 15
+                    } ?: return@async
+                    synchronized(found) {
+                        if (found.any { it.remoteId == s.id.toString() } || found.size >= 4) return@synchronized
+                    }
+                    val lyric = neteaseLyric(s.id) ?: return@async
+                    val lines = parseLrc(lyric.first)
+                    if (lines.isEmpty()) return@async
+                    val trans = lyric.second
+                    val merged = if (trans != null) mergeTranslation(lines, parseLrc(trans)) else lines
+                    val c = LyricCandidate(
+                        source = "网易云",
+                        remoteId = s.id.toString(),
+                        displayTitle = listOf(s.name, s.artists?.joinToString(",") { it.name })
+                            .filterNotNull().filter { it.isNotBlank() }.joinToString(" / ")
+                            .ifBlank { q },
+                        lines = merged,
+                        durationDeltaSec = (s.duration / 1000 - durationSec),
+                    )
+                    synchronized(found) {
+                        if (found.none { it.remoteId == c.remoteId } && found.size < 4) found += c
+                    }
+                }
+            }.joinAll()
+            found
+        }
+        val lrclibDeferred = async {
+            val queries = buildQueries(title, artist, null, null).take(4)
+            val found = mutableListOf<LyricCandidate>()
+            queries.map { q ->
+                async {
+                    if (found.size >= 2) return@async
+                    for (t in lrclibTracks(q)) {
+                        if (durationSec > 0 && kotlin.math.abs(t.duration.toLong() - durationSec) > 15) continue
+                        val lines = t.syncedLyrics?.let { parseLrc(it) }.orEmpty()
+                        if (lines.isEmpty()) continue
+                        synchronized(found) {
+                            if (found.any { it.displayTitle == t.trackName + " / " + t.artistName } || found.size >= 2)
+                                return@synchronized
+                            found += LyricCandidate(
+                                source = "lrclib",
+                                remoteId = "",
+                                displayTitle = t.trackName + " / " + t.artistName,
+                                lines = lines,
+                                durationDeltaSec = (t.duration.toLong() - durationSec),
+                            )
+                        }
+                        break
+                    }
+                }
+            }.joinAll()
+            found
+        }
+        val ctx = ctxDeferred.await()
+
         val out = mutableListOf<LyricCandidate>()
-
-        // 网易云:每个查询取前 2 个时长匹配的,共 ≤4 个候选
-        for (q in candidates) {
-            if (out.count { it.source == "网易云" } >= 4) break
-            for (s in neteaseSearch(q)) {
-                if (out.any { it.source == "网易云" && it.remoteId == s.id.toString() }) continue
-                if (durationSec > 0 && kotlin.math.abs(s.duration / 1000 - durationSec) > 15) continue
-                val lyric = neteaseLyric(s.id) ?: continue
-                val lines = parseLrc(lyric.first)
-                if (lines.isEmpty()) continue
-                val trans = lyric.second
-                val merged = if (trans != null) mergeTranslation(lines, parseLrc(trans)) else lines
-                out += LyricCandidate(
-                    source = "网易云",
-                    remoteId = s.id.toString(),
-                    displayTitle = listOf(s.name, s.artists?.joinToString(",") { it.name })
-                        .filterNotNull().filter { it.isNotBlank() }.joinToString(" / ")
-                        .ifBlank { q },
-                    lines = merged,
-                    durationDeltaSec = (s.duration / 1000 - durationSec),
-                )
-                break // 每个查询词只取第一个匹配
+        out += neteaseDeferred.await()
+        out += lrclibDeferred.await()
+        // bgm 增强词补查:并行阶段不带 ctx(不等它),ctx 回来后若 bgm 歌名还没出现在
+        // 候选查询里,补一轮(只补一个词,一次搜索+取词;bgm 词命中率最高,值得补)
+        ctx?.bgmTitle?.takeIf { it.isNotBlank() }?.let { bgm ->
+            val q = buildQueries(bgm, ctx?.bgmSinger.orEmpty(), null, null).firstOrNull() ?: return@let
+            val alreadyCovered = out.any { it.source == "网易云" && it.displayTitle.contains(bgm, ignoreCase = true) }
+            if (!alreadyCovered && out.count { it.source == "网易云" } < 4) {
+                val s = neteaseSearch(q).firstOrNull {
+                    durationSec <= 0 || kotlin.math.abs(it.duration / 1000 - durationSec) <= 15
+                }
+                if (s != null) {
+                    val lyric = neteaseLyric(s.id)
+                    if (lyric != null) {
+                        val lines = parseLrc(lyric.first)
+                        if (lines.isNotEmpty()) {
+                            val trans = lyric.second
+                            val merged = if (trans != null) mergeTranslation(lines, parseLrc(trans)) else lines
+                            out += LyricCandidate(
+                                source = "网易云",
+                                remoteId = s.id.toString(),
+                                displayTitle = listOf(s.name, s.artists?.joinToString(",") { it.name })
+                                    .filterNotNull().filter { it.isNotBlank() }.joinToString(" / ")
+                                    .ifBlank { q },
+                                lines = merged,
+                                durationDeltaSec = (s.duration / 1000 - durationSec),
+                            )
+                        }
+                    }
+                }
             }
         }
-
-        // lrclib:不同查询词命中的不同 track(按 trackName 去重)
-        for (q in candidates.take(4)) {
-            if (out.count { it.source == "lrclib" } >= 2) break
-            for (t in lrclibTracks(q)) {
-                if (out.any { it.source == "lrclib" && it.displayTitle == t.trackName }) continue
-                if (durationSec > 0 && kotlin.math.abs(t.duration.toLong() - durationSec) > 15) continue
-                val lines = parseLrc(t.syncedLyrics!!)
-                if (lines.isEmpty()) continue
-                out += LyricCandidate(
-                    source = "lrclib",
-                    remoteId = "",
-                    displayTitle = t.trackName + " / " + t.artistName,
-                    lines = lines,
-                    durationDeltaSec = (t.duration.toLong() - durationSec),
-                )
-                break
-            }
-        }
-
-        // B 站字幕:固定一个候选(若存在)
+        // B 站字幕:固定一个候选(若存在);它的查询需要 ctx(bgm 信息增强),放主流程尾部
         ctx?.subtitleLines?.takeIf { it.isNotEmpty() }?.let {
             out += LyricCandidate(
                 source = "B站字幕",
@@ -170,6 +224,7 @@ class LyricRepository {
             )
         }
         out
+        }
     }
 
     /**

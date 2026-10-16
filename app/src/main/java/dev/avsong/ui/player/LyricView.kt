@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -18,11 +20,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -49,6 +53,8 @@ fun LyricView(
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier,
     onArtwork: Boolean = false,
+    /** 拖动进度时的预览时间(非空=预览态:歌词滚到目标行并盖指示线);松手后传 null。 */
+    previewMs: Long? = null,
 ) {
     val activeColor = if (onArtwork) Color.White else MaterialTheme.colorScheme.onSurface
     val inactiveColor = if (onArtwork) Color.White.copy(alpha = 0.55f)
@@ -176,5 +182,6 @@ private fun LyricLines(
                 }
             }
         }
+
     }
 }

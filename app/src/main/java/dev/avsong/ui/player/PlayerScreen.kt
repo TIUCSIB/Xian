@@ -860,6 +860,8 @@ private fun WaveformSeekBar(
     barCount: Int = 44,
     /** 总时长(ms):拖动气泡换算目标时间用;<=0 时不显示气泡。 */
     durationMs: Long = 0L,
+    /** 拖动中上报 fraction(松手/取消报 null):歌词区联动显示预览指示线。 */
+    onDragChange: ((Float?) -> Unit)? = null,
 ) {
     val bars = remember(barCount) {
         List(barCount) { i -> 0.22f + 0.78f * abs(sin(i * 12.9898f) * 43758.5453f % 1f) }
@@ -882,15 +884,23 @@ private fun WaveformSeekBar(
                 }
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
-                        onDragStart = { offset -> dragFraction = (offset.x / size.width).coerceIn(0f, 1f) },
+                        onDragStart = { offset ->
+                            dragFraction = (offset.x / size.width).coerceIn(0f, 1f)
+                            onDragChange?.invoke(dragFraction)
+                        },
                         onDragEnd = {
                             dragFraction?.let(onSeekFraction)
                             dragFraction = null
+                            onDragChange?.invoke(null)
                         },
-                        onDragCancel = { dragFraction = null },
+                        onDragCancel = {
+                            dragFraction = null
+                            onDragChange?.invoke(null)
+                        },
                     ) { change, _ ->
                         change.consume()
                         dragFraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                        onDragChange?.invoke(dragFraction)
                     }
                 },
     ) {
