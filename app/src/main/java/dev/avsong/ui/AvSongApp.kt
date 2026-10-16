@@ -11,6 +11,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -30,12 +31,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.rounded.Checklist
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -77,13 +81,14 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import dev.avsong.ui.home.HomeScreen
+import dev.avsong.ui.library.BatchFavoriteDialog
 import dev.avsong.ui.library.CollectionContentScreen
 import dev.avsong.ui.library.FavoritePickerDialog
 import dev.avsong.ui.library.FolderContentScreen
 import dev.avsong.ui.library.LibraryScreen
 import dev.avsong.ui.library.LocalPlaylistContentScreen
 import dev.avsong.ui.library.PlaylistScreen
-import dev.avsong.ui.login.LoginScreen
+import dev.avsong.ui.library.LoginEntryDialog
 import dev.avsong.ui.player.PlayerScreen
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.History
@@ -101,7 +106,6 @@ object Routes {
     const val SEARCH = "search"
     const val PLAYLIST = "playlist"
     const val MINE = "mine"
-    const val LOGIN = "login"
     const val FOLDER = "library/folder/{folderId}?title={title}"
     const val COLLECTION = "library/collection/{mid}/{seasonId}?title={title}"
     const val LOCAL_PLAYLIST = "library/local/{playlistId}?title={title}"
@@ -134,6 +138,8 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as dev.avsong.AvSongApp
     val snackbarHostState = remember { SnackbarHostState() }
     var showFavoritePicker by remember { mutableStateOf(false) }
+    // 全局登录弹窗:各页(首页未登录态/歌单错误区)的「去登录」统一走它(旧整页 LoginScreen 已删)
+    var showLoginDialog by remember { mutableStateOf(false) }
     // 列表行长按「收藏」的目标曲(非空时弹 FavoritePickerDialog);迷你条收藏用当前曲
     var favoriteTargetBvid by remember { mutableStateOf<String?>(null) }
     // 迷你条的队列入口:底部抽屉(队列页已删,播放队列只在此抽屉展示)
@@ -183,6 +189,11 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
             }
         },
     )
+
+    // 全局登录弹窗(扫码/Cookie 方式选择,与「我的」页账户头同款入口;旧整页登录已删)
+    if (showLoginDialog) {
+        LoginEntryDialog(onDismiss = { showLoginDialog = false })
+    }
 
     if (showFavoritePicker) {
         val bvid = favoriteTargetBvid ?: state.player.currentMediaId ?: ""
@@ -263,7 +274,14 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                 }
                 when (queueTab) {
                     0 -> {
-                        // 功能条:单键循环切换播放模式 + 下载/收藏/清空(清空带确认气泡)
+                        // 多选状态:队列批量下载/收藏(选中集合按队列下标记)
+                        var multiSelect by remember { mutableStateOf(false) }
+                        var selectedIdx by remember { mutableStateOf(setOf<Int>()) }
+                        var showBatchFav by remember { mutableStateOf(false) }
+                        val selectedEntries = selectedIdx.mapNotNull { state.player.queue.getOrNull(it) }
+
+                        if (!multiSelect) {
+                        // 功能条:单键循环切换播放模式 + 下载/收藏/多选/清空(清空带确认弹窗)
                         val (modeLabel, modeIcon) = when {
                             state.player.shuffleEnabled -> "随机播放" to Icons.Rounded.Shuffle
                             state.player.repeatMode == Player.REPEAT_MODE_ONE ->
@@ -287,6 +305,10 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                             }
                             BarAction(Icons.Rounded.FavoriteBorder, "收藏当前歌曲") {
                                 if (state.player.currentMediaId != null) showFavoritePicker = true
+                            }
+                            BarAction(Icons.Rounded.Checklist, "多选(批量下载/收藏)") {
+                                multiSelect = true
+                                selectedIdx = emptySet()
                             }
                             var showClearConfirm by remember { mutableStateOf(false) }
                             BarAction(Icons.Rounded.DeleteSweep, "清空播放队列") {
@@ -313,6 +335,40 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                                 )
                             }
                         }
+                        } else {
+                            // 批量操作条:全选/反选 + 下载 + 收藏 + 完成(勾选 N 首实时回显)
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 24.dp, end = 12.dp, bottom = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                ModeChip("已选 ${selectedEntries.size} 首", Icons.Rounded.Checklist, active = true) {
+                                    // 点已选计数 = 全选/反选切换:全选中时点击清空,否则全选
+                                    selectedIdx =
+                                        if (selectedIdx.size == state.player.queue.size) emptySet()
+                                        else state.player.queue.indices.toSet()
+                                }
+                                Spacer(Modifier.weight(1f))
+                                BarAction(Icons.Rounded.SwapVert, "反选") {
+                                    selectedIdx = state.player.queue.indices.toSet() - selectedIdx
+                                }
+                                BarAction(Icons.Rounded.Download, "批量下载") {
+                                    if (selectedEntries.isNotEmpty()) {
+                                        viewModel.downloadFromQueue(appContext, selectedEntries)
+                                        multiSelect = false
+                                        selectedIdx = emptySet()
+                                    }
+                                }
+                                BarAction(Icons.Rounded.FavoriteBorder, "批量收藏") {
+                                    if (selectedEntries.isNotEmpty()) showBatchFav = true
+                                }
+                                BarAction(Icons.Rounded.Close, "退出多选") {
+                                    multiSelect = false
+                                    selectedIdx = emptySet()
+                                }
+                            }
+                        }
                         QueueContent(
                             queue = state.player.queue,
                             currentIndex = state.player.currentIndex,
@@ -327,7 +383,26 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                             isPlaying = state.player.isPlaying,
                             showReorder = false,
                             listState = queueListState,
+                            selectionMode = multiSelect,
+                            selected = selectedIdx,
+                            onToggleSelect = { idx ->
+                                selectedIdx = if (idx in selectedIdx) selectedIdx - idx else selectedIdx + idx
+                            },
                         )
+                        // 批量收藏夹选择:确定后逐首 modify(VM 串行+间隔防风控),结果走全局提示条
+                        if (showBatchFav) {
+                            BatchFavoriteDialog(
+                                favRepo = viewModel.favoriteRepository,
+                                songCount = selectedEntries.size,
+                                onConfirm = { folderIds ->
+                                    showBatchFav = false
+                                    viewModel.favoriteFromQueue(selectedEntries, folderIds)
+                                    multiSelect = false
+                                    selectedIdx = emptySet()
+                                },
+                                onDismiss = { showBatchFav = false },
+                            )
+                        }
                     }
                     1 -> if (playHistory.isEmpty()) {
                         Box(
@@ -361,6 +436,9 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
     Box(Modifier.fillMaxSize()) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        // 顶部 insets 由各页面自行处理(都有 statusBarsPadding);Scaffold 若再算一次
+        // 会与页面层叠加——真机挖孔屏状态栏 40dp 双倍=顶部空一大截(模拟器 insets≈0 遂无症状)
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             // 迷你条与 tab 栏熔接为一个圆角容器:迷你条出上圆角、tab 出下圆角,
             // 中缝零间距贴合;二者单独出现时各自保持全圆角。播放页两者都隐藏。
@@ -419,7 +497,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onPlayPause = viewModel::playPause,
                         onRefresh = { viewModel.loadHome(force = true) },
                         onLoadMore = viewModel::loadMoreHome,
-                        onLogin = { navController.navigate(Routes.LOGIN) },
+                        onLogin = { showLoginDialog = true },
                         onPlayNext = viewModel::playNext,
                         onAddToQueue = viewModel::addToQueue,
                         onFavorite = { song ->
@@ -475,7 +553,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onPlayPause = viewModel::playPause,
                         player = state.player,
                         playingId = viewModel.playingPlaylistId(state.player),
-                        onLogin = { navController.navigate(Routes.LOGIN) },
+                        onLogin = { showLoginDialog = true },
                         localPlaylists = localPlaylists,
                         onCreateLocalPlaylist = { name ->
                             viewModel.createLocalPlaylist(name)
@@ -490,7 +568,6 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                 }
                 composable(Routes.MINE) {
                     LibraryScreen(
-                        onLogin = { navController.navigate(Routes.LOGIN) },
                         onOpenDownloads = { navController.navigate(Routes.DOWNLOADED) },
                         onOpenPlayHistory = { navController.navigate(Routes.PLAY_HISTORY) },
                         onOpenPlaybackSettings = { navController.navigate(Routes.PLAYBACK_SETTINGS) },
@@ -531,6 +608,10 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onAddToQueue = viewModel::addToQueue,
                         currentMediaId = state.player.currentMediaId,
                         isPlaying = state.player.isPlaying,
+                        // 多选批量(2026-10-15):下一首/入队/收藏直连 VM 批量方法
+                        onPlayNextBatch = viewModel::playNextBatch,
+                        onAddToQueueBatch = { songs -> songs.forEach(viewModel::addToQueue) },
+                        onFavoriteBatch = viewModel::favoriteSongs,
                     )
                 }
                 composable(Routes.PLAY_HISTORY) {
@@ -544,9 +625,6 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                 }
                 composable(Routes.ABOUT) {
                     dev.avsong.ui.settings.AboutScreen(onBack = { navController.popBackStack() })
-                }
-                composable(Routes.LOGIN) {
-                    LoginScreen(onBack = { navController.popBackStack() })
                 }
                 composable(Routes.FOLDER) { entry ->
                     val folderId = entry.arguments?.getString("folderId")?.toLongOrNull() ?: 0L
@@ -566,6 +644,9 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                             showFavoritePicker = true
                         },
                         onDownload = { song -> viewModel.downloadSong(appContext, song) },
+                        onPlayNextBatch = { songs -> viewModel.playNextBatch(songs) },
+                        onAddToQueueBatch = { songs -> songs.forEach { viewModel.addToQueue(it) } },
+                        onFavoriteBatch = { songs, folderIds -> viewModel.favoriteSongs(songs, folderIds) },
                         onDownloadAll = { songs -> viewModel.downloadAll(appContext, songs) },
                         currentMediaId = state.player.currentMediaId,
                         isPlaying = state.player.isPlaying,
@@ -591,6 +672,9 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                             showFavoritePicker = true
                         },
                         onDownload = { song -> viewModel.downloadSong(appContext, song) },
+                        onPlayNextBatch = { songs -> viewModel.playNextBatch(songs) },
+                        onAddToQueueBatch = { songs -> songs.forEach { viewModel.addToQueue(it) } },
+                        onFavoriteBatch = { songs, folderIds -> viewModel.favoriteSongs(songs, folderIds) },
                         onDownloadAll = { songs -> viewModel.downloadAll(appContext, songs) },
                         currentMediaId = state.player.currentMediaId,
                         isPlaying = state.player.isPlaying,
@@ -613,6 +697,10 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         },
                         onDownload = { song -> viewModel.downloadSong(appContext, song) },
                         onPlayQueue = { songs -> viewModel.playQueue(songs, 0) },
+                        onDownloadAll = { songs -> viewModel.downloadAll(appContext, songs) },
+                        onPlayNextBatch = { songs -> viewModel.playNextBatch(songs) },
+                        onAddToQueueBatch = { songs -> songs.forEach { viewModel.addToQueue(it) } },
+                        onFavoriteBatch = { songs, folderIds -> viewModel.favoriteSongs(songs, folderIds) },
                         currentMediaId = state.player.currentMediaId,
                         isPlaying = state.player.isPlaying,
                     )
@@ -642,8 +730,17 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                 danmakuEnabled = app.settingsStore.state.value.danmakuEnabled,
                 danmakuMode = danmakuSettings.danmakuMode,
                 positionProvider = viewModel::currentPosition,
+                onLyricReplaced = { lines -> viewModel.replaceLyric(state.player.currentMediaId ?: "", lines) },
+                lyricRepository = viewModel.lyricRepository,
+                getCsrf = { app.authStore.state.value.biliJct },
                 // 播放页爱心的本地歌单区:快照直接用当前播放曲的 PlayerState 字段拼
                 localPlaylists = localPlaylists2,
+                localPlaylistsState = viewModel.localPlaylistStore.playlists,
+                onUnfavoriteAll = {
+                    state.player.currentMediaId?.let { viewModel.unfavoriteEverywhere(it) }
+                },
+                unfavResult = viewModel.unfavResult.collectAsState().value,
+                onConsumeUnfavResult = viewModel::consumeUnfavResult,
                 onToggleLocal = { pl, checked ->
                     val ps = state.player
                     val bvid = ps.currentMediaId

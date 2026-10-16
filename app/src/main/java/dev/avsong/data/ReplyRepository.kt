@@ -21,6 +21,9 @@ object ReplyRepository {
         val uname: String,
         val message: String,
         val likeCount: Int,
+        val rpid: Long = 0,
+        /** 本账号点赞态(0/1/2);匿名恒 0。 */
+        val action: Int = 0,
     )
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -44,6 +47,8 @@ object ReplyRepository {
                     uname = it.member.uname,
                     message = it.content.message,
                     likeCount = it.like,
+                    rpid = it.rpid,
+                    action = it.action,
                 )
             }
         }
@@ -53,5 +58,30 @@ object ReplyRepository {
     suspend fun hotRepliesFor(song: Song, fetchAid: suspend (String) -> Long): List<HotReply> {
         val aid = if (song.aid > 0) song.aid else runCatching { fetchAid(song.bvid) }.getOrDefault(0L)
         return runCatching { hotReplies(aid) }.getOrDefault(emptyList())
+    }
+
+    /**
+     * 评论点赞([ReplyRepository] 内唯一写操作):POST /x/v2/reply/action。
+     * [like] true=点赞 false=取消;需登录(csrf=bili_jct),匿名调用会返回 -101 由上层提示。
+     * 成功后 B 站不回新的赞数,UI 侧按 action 翻转本地 +1/-1 即可。
+     */
+    suspend fun likeReply(oid: Long, rpid: Long, like: Boolean, csrf: String) = withContext(Dispatchers.IO) {
+        val form = okhttp3.FormBody.Builder()
+            .add("oid", oid.toString())
+            .add("type", "1") // 1=视频评论
+            .add("rpid", rpid.toString())
+            .add("action", if (like) "1" else "0")
+            .add("csrf", csrf)
+            .build()
+        val request = Request.Builder()
+            .url("https://api.bilibili.com/x/v2/reply/action")
+            .header("Referer", "https://www.bilibili.com")
+            .post(form)
+            .build()
+        dev.avsong.data.BiliHttp.client.newCall(request).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            val code = Regex(""""code":(-?\d+)""").find(body)?.groupValues?.get(1)?.toIntOrNull() ?: -1
+            if (!resp.isSuccessful || code != 0) throw IOException("点赞失败 code=$code")
+        }
     }
 }

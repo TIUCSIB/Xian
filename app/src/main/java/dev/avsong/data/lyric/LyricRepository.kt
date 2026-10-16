@@ -44,7 +44,12 @@ class LyricRepository {
     private data class NeteaseSong(
         val id: Long = 0,
         val duration: Long = 0, // ms
+        val name: String = "", // 歌名(换源候选预览用)
+        val artists: List<NeteaseArtist>? = null,
     )
+
+    @Serializable
+    private data class NeteaseArtist(val name: String = "")
 
     @Serializable
     private data class NeteaseLyricResponse(
@@ -85,6 +90,91 @@ class LyricRepository {
             }
         }
     }
+
+    /**
+     * 手动换源(用户点名「词不对」时自己挑):
+     * 把三源全部候选收集成列表(网易云多查询命中/_lrclib 命中/B 站字幕),
+     * 每项带来源标签、标题/歌手预览、行数、时长偏差——UI 据此渲染候选单。
+     * [LyricCandidate.lyrics] 在收集时立即取词(网易云取词很快,且 lrclib 响应自带;
+     * 只对能取到词的候选填,取不到的跳过不进列表)。
+     */
+    suspend fun listCandidates(
+        bvid: String,
+        title: String,
+        artist: String,
+        durationSec: Long = 0,
+    ): List<LyricCandidate> = withContext(Dispatchers.IO) {
+        val ctx = runCatching { biliContext(bvid) }.getOrNull()
+        val candidates = buildQueries(title, artist, ctx?.bgmTitle, ctx?.bgmSinger)
+        val out = mutableListOf<LyricCandidate>()
+
+        // 网易云:每个查询取前 2 个时长匹配的,共 ≤4 个候选
+        for (q in candidates) {
+            if (out.count { it.source == "网易云" } >= 4) break
+            for (s in neteaseSearch(q)) {
+                if (out.any { it.source == "网易云" && it.remoteId == s.id.toString() }) continue
+                if (durationSec > 0 && kotlin.math.abs(s.duration / 1000 - durationSec) > 15) continue
+                val lyric = neteaseLyric(s.id) ?: continue
+                val lines = parseLrc(lyric.first)
+                if (lines.isEmpty()) continue
+                val trans = lyric.second
+                val merged = if (trans != null) mergeTranslation(lines, parseLrc(trans)) else lines
+                out += LyricCandidate(
+                    source = "网易云",
+                    remoteId = s.id.toString(),
+                    displayTitle = listOf(s.name, s.artists?.joinToString(",") { it.name })
+                        .filterNotNull().filter { it.isNotBlank() }.joinToString(" / ")
+                        .ifBlank { q },
+                    lines = merged,
+                    durationDeltaSec = (s.duration / 1000 - durationSec),
+                )
+                break // 每个查询词只取第一个匹配
+            }
+        }
+
+        // lrclib:不同查询词命中的不同 track(按 trackName 去重)
+        for (q in candidates.take(4)) {
+            if (out.count { it.source == "lrclib" } >= 2) break
+            for (t in lrclibTracks(q)) {
+                if (out.any { it.source == "lrclib" && it.displayTitle == t.trackName }) continue
+                if (durationSec > 0 && kotlin.math.abs(t.duration.toLong() - durationSec) > 15) continue
+                val lines = parseLrc(t.syncedLyrics!!)
+                if (lines.isEmpty()) continue
+                out += LyricCandidate(
+                    source = "lrclib",
+                    remoteId = "",
+                    displayTitle = t.trackName + " / " + t.artistName,
+                    lines = lines,
+                    durationDeltaSec = (t.duration.toLong() - durationSec),
+                )
+                break
+            }
+        }
+
+        // B 站字幕:固定一个候选(若存在)
+        ctx?.subtitleLines?.takeIf { it.isNotEmpty() }?.let {
+            out += LyricCandidate(
+                source = "B站字幕",
+                remoteId = "",
+                displayTitle = "视频字幕(可能含口播)",
+                lines = it,
+                durationDeltaSec = 0,
+            )
+        }
+        out
+    }
+
+    /**
+     * 换源落地:把用户选中的歌词写入缓存并返回。
+     * fetch() 有缓存短路,下次切回这首歌直接命中选中版本。
+     */
+    fun applyCandidate(bvid: String, candidate: LyricCandidate): List<LyricLine> {
+        cache[bvid] = candidate.lines
+        return candidate.lines
+    }
+
+    /** 读缓存(换源弹窗应用后回读用);无缓存返回 null。 */
+    fun fetchCached(bvid: String): List<LyricLine>? = cache[bvid]
 
     private fun loadBlocking(bvid: String, title: String, artist: String, durationSec: Long): List<LyricLine> {
         // 上下文只取一次:view(cid)+ player/v2(subtitles + bgm_info)
@@ -230,8 +320,17 @@ class LyricRepository {
      * 时长校验 ±15s(durationSec 未知则放行)。lrclib 要求 UA 标注应用,不复用浏览器 UA。
      */
     private fun lrclibSearch(keyword: String, durationSec: Long): List<LyricLine> {
+        val hit = lrclibTracks(keyword).firstOrNull { t ->
+            !t.syncedLyrics.isNullOrBlank() &&
+                (durationSec <= 0 || kotlin.math.abs(t.duration.toLong() - durationSec) <= 15)
+        } ?: return emptyList()
+        return parseLrc(hit.syncedLyrics!!)
+    }
+
+    /** lrclib 原始 track 列表(换源候选用:每项自带 syncedLyrics,无需二次请求)。 */
+    private fun lrclibTracks(keyword: String): List<LrclibTrack> {
         val url = "https://lrclib.net/api/search?q=" + java.net.URLEncoder.encode(keyword, "UTF-8")
-        val tracks = runCatching {
+        return runCatching {
             val request = Request.Builder().url(url)
                 .header("User-Agent", "AvSong/1.0 (bilibili music player)")
                 .get().build()
@@ -240,11 +339,6 @@ class LyricRepository {
                 json.decodeFromString<List<LrclibTrack>>(resp.body?.string().orEmpty())
             }
         }.getOrDefault(emptyList())
-        val hit = tracks.firstOrNull { t ->
-            !t.syncedLyrics.isNullOrBlank() &&
-                (durationSec <= 0 || kotlin.math.abs(t.duration - durationSec) <= 15)
-        } ?: return emptyList()
-        return parseLrc(hit.syncedLyrics!!)
     }
 
     // ---------- HTTP ----------
@@ -278,6 +372,19 @@ class LyricRepository {
 
 /** 一行歌词:时间(毫秒)+ 文本 + 可选翻译行。 */
 data class LyricLine(val timeMs: Long, val text: String, val sub: String? = null)
+
+/**
+ * 换源候选:一个来自网易云/lrclib/B站字幕的完整歌词版本。
+ * [lines] 在列候选时就取好(网易云取词快、lrclib 自带,避免选中后再等一次网络)。
+ */
+data class LyricCandidate(
+    val source: String,
+    val remoteId: String,
+    val displayTitle: String,
+    val lines: List<LyricLine>,
+    /** 候选时长与当前视频时长的偏差(秒),0 表示对齐/未知。 */
+    val durationDeltaSec: Long,
+)
 
 /**
  * 把翻译歌词按时间戳就近合并进主歌词。

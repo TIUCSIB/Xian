@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class LibraryViewModel(
-    private val favRepo: FavoriteRepository,
+    val favRepo: FavoriteRepository,
     private val collectionRepo: CollectionRepository,
     private val collectionStore: CollectionStore,
 ) : ViewModel() {
@@ -169,7 +169,7 @@ class LibraryViewModel(
 
 /** 收藏夹内容页状态。 */
 class FolderContentViewModel(
-    private val favRepo: FavoriteRepository,
+    val favRepo: FavoriteRepository,
     val folderId: Long,
     private val playerController: PlayerController,
 ) : ViewModel() {
@@ -181,6 +181,8 @@ class FolderContentViewModel(
         val loading: Boolean = true,
         val loadingMore: Boolean = false,
         val error: String? = null,
+        /** 收藏夹简介(resource/list 的 info 块)。 */
+        val intro: String = "",
         /** 删除收藏夹失败等操作错误(页面弹提示,不占屏)。 */
         val actionError: String? = null,
     )
@@ -198,7 +200,13 @@ class FolderContentViewModel(
             try {
                 val result = favRepo.folderContents(folderId, 1)
                 _state.update {
-                    it.copy(songs = result.songs, page = 1, hasMore = result.hasMore, loading = false)
+                    it.copy(
+                        songs = result.songs,
+                        page = 1,
+                        hasMore = result.hasMore,
+                        intro = result.intro,
+                        loading = false,
+                    )
                 }
             } catch (e: Exception) {
                 _state.update { it.copy(loading = false, error = e.message) }
@@ -350,7 +358,7 @@ class CollectionContentViewModel(
     val mid: Long,
     val seasonId: Long,
     private val playerController: PlayerController,
-    private val favRepo: FavoriteRepository,
+    val favRepo: FavoriteRepository,
     private val collectionStore: CollectionStore,
 ) : ViewModel() {
 
@@ -358,6 +366,7 @@ class CollectionContentViewModel(
         val title: String = "",
         val cover: String? = null,
         val upperName: String = "",
+        val intro: String = "",
         val total: Int = 0,
         val songs: List<Song> = emptyList(),
         val page: Int = 1,
@@ -386,6 +395,7 @@ class CollectionContentViewModel(
                         cover = result.meta?.cover,
                         total = result.meta?.total ?: 0,
                         upperName = result.songs.firstOrNull()?.artist.orEmpty(),
+                        intro = result.meta?.intro.orEmpty(),
                         songs = result.songs,
                         page = 1,
                         hasMore = result.hasMore,

@@ -36,6 +36,11 @@ fun CollectionContentScreen(
     onDownload: (Song) -> Unit,
     /** ⋮ 菜单「下载全部」：把已加载的歌曲整批入队(队列自动去重已下载/已在队的)。 */
     onDownloadAll: (List<Song>) -> Unit,
+    /** 多选批量「下一首播放」/「加入队列」(保持选中顺序)。 */
+    onPlayNextBatch: (List<Song>) -> Unit,
+    onAddToQueueBatch: (List<Song>) -> Unit,
+    /** 多选批量收藏:弹窗选定夹组合后执行(经 MainViewModel.favoriteSongs)。 */
+    onFavoriteBatch: (List<Song>, List<Long>) -> Unit,
     currentMediaId: String?,
     isPlaying: Boolean,
 ) {
@@ -44,12 +49,13 @@ fun CollectionContentScreen(
     // 与播放补全(playWithFill)共用同一个 loadingAll 标记,互相防竞态
     val loadingAll by vm.loadingAll.collectAsState()
     var showUnsubConfirm by remember { mutableStateOf(false) }
+    var showBatchFav by remember { mutableStateOf<List<Song>?>(null) }
     val displayTitle = state.title.ifBlank { fallbackTitle }
 
     PlaylistDetailContent(
         title = displayTitle,
         metaLine = if (state.total > 0) "合集 · 共 ${state.total} 个视频" else "合集",
-        subtitle = state.upperName,
+        subtitle = listOf(state.upperName, state.intro).filter { it.isNotBlank() }.joinToString(" · "),
         cover = state.cover ?: state.songs.firstOrNull()?.coverUrl,
         songs = state.songs,
         loading = state.loading,
@@ -62,6 +68,7 @@ fun CollectionContentScreen(
         // 头部「播放」= 整队替换(2026-10-15 用户反馈:播放歌单不该往旧队列里追加——
         // 旧队列与合集的重复曲会让补全去重跳过,合集里那几首反而没进队)。点行仍=插播不换队。
         onPlayAll = { loaded -> vm.playWithFill(0, { songs, _ -> onPlayQueue(songs) }, replace = true) },
+        onDownloadAllParam = onDownloadAll,
         // 播放前先拉全量:否则大合集点播放只入列已加载的第一页(20 首)
         // 搜索期间播过滤子集(直接整队,不走 playWithFill——它的 loadingAll 护栏会
         // 吞掉搜索加载中的点击,且全量列表第 index 首与过滤子集第 index 首对不上,用户实测两 bug)
@@ -92,6 +99,12 @@ fun CollectionContentScreen(
         loadingAll = loadingAll,
         loadingHint = if (loadingAll) "已加载 ${state.songs.size}/${state.total},补全中…" else null,
         onLoadAll = vm::loadAll,
+        batchActions = dev.avsong.ui.library.BatchActions(
+            onDownload = onDownloadAll,
+            onFavorite = { songs -> showBatchFav = songs },
+            onPlayNext = onPlayNextBatch,
+            onAddToQueue = onAddToQueueBatch,
+        ),
         menuActions = listOf(
             "下载全部(已加载 " + state.songs.size.toString() + " 首)" to { onDownloadAll(state.songs) },
             "取消订阅" to { showUnsubConfirm = true },
@@ -112,6 +125,16 @@ fun CollectionContentScreen(
             dismissButton = {
                 TextButton(onClick = { showUnsubConfirm = false }) { Text("再想想") }
             },
+        )
+    }
+
+    // 多选批量收藏:复用队列多选同款夹选择弹窗(勾夹 → 逐首 modify)
+    showBatchFav?.let { songs ->
+        BatchFavoriteDialog(
+            favRepo = vm.favRepo,
+            songCount = songs.size,
+            onConfirm = { folderIds -> onFavoriteBatch(songs, folderIds) },
+            onDismiss = { showBatchFav = null },
         )
     }
 }

@@ -117,7 +117,6 @@ import kotlin.math.sin
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
-    onLogin: () -> Unit,
     onOpenDownloads: () -> Unit,
     onOpenPlayHistory: () -> Unit,
     /** 播放设置子页(音质/历史上限/倍速/睡眠定时/热评展示收纳处,2026-10-15 起)。 */
@@ -679,7 +678,7 @@ private fun formatCoin(coin: Double) =
  * 登录成功显示昵称+完成。已登录时打开直接是已登录态(可退出)。
  */
 @Composable
-private fun LoginEntryDialog(onDismiss: () -> Unit) {
+fun LoginEntryDialog(onDismiss: () -> Unit) {
     val vm = rememberLoginViewModel()
     val state by vm.state.collectAsState()
     // 弹窗内视图:方式选择页 ↔ 扫码页(登录成功后 fixed 为结果页,返回箭头隐藏)

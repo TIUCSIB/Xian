@@ -32,6 +32,8 @@ data class FavFolder(
     val type: Int = 0,
     val title: String = "",
     val cover: String? = null,
+    /** 收藏夹简介(created/list 返回;list-all 轻量版无)。 */
+    val intro: String = "",
     @SerialName("media_count") val mediaCount: Int = 0,
     /** 带 rid+biz_type 查询时返回:1=已收藏 2=在私密夹未收藏 0=未收藏。 */
     @SerialName("fav_state") val favState: Int = 0,
@@ -54,6 +56,18 @@ data class FavResourceListData(
     // → 详情页报 "Expected start of the array '[' but had 'n'"(实测:收藏=1 首时取消收藏后复现)
     val medias: List<FavMedia>? = null,
     val has_more: Boolean = false,
+    /** 收藏夹元数据(每页都带):详情页头部简介从这里取。 */
+    val info: FavResourceInfo? = null,
+)
+
+@Serializable
+data class FavResourceInfo(
+    val id: Long = 0,
+    val title: String = "",
+    /** 收藏夹简介(网页端创建时填的 intro)。 */
+    val intro: String = "",
+    @SerialName("media_count") val mediaCount: Int = 0,
+    val cover: String? = null,
 )
 
 @Serializable

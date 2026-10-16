@@ -15,3 +15,6 @@ captures/
 # AI 助手/UI 自动化残留
 .zcode/
 ui_t.xml
+
+# 一次性素材生成脚本(写死本机绝对路径,不入库)
+gen_assets.py

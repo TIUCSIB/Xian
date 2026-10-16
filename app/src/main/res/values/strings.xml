@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">弦 Xian</string>
+    <string name="widget_description">正在播放小组件</string>
 </resources>

@@ -226,7 +226,10 @@ data class ReplyCursor(
 
 @Serializable
 data class ReplyItem(
+    val rpid: Long = 0,
     val like: Int = 0,
+    /** 本账号对这条评论的点赞态(0=未赞 1=已赞 2=踩);匿名恒 0,登录后由响应带出。 */
+    val action: Int = 0,
     val member: ReplyMember,
     val content: ReplyContent,
 )

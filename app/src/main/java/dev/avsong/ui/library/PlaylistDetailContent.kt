@@ -21,6 +21,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -33,6 +39,7 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -42,6 +49,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
@@ -95,6 +103,8 @@ fun PlaylistDetailContent(
     onPlay: (List<Song>, Int) -> Unit,
     /** 头部「播放」钮专用(2026-10-15 起)= 整队替换语义;缺省回退 onPlay(songs, 0)。 */
     onPlayAll: ((List<Song>) -> Unit)? = null,
+    /** 头部「下载」胶囊(整队入下载队列);null=胶囊不渲染。 */
+    onDownloadAllParam: ((List<Song>) -> Unit)? = null,
     /** 列表顶部进度行(如「已加载 45/978,补全中…」);null=不渲染。大合集补全时的加载反馈。 */
     loadingHint: String? = null,
     onShuffle: (List<Song>) -> Unit,
@@ -112,11 +122,19 @@ fun PlaylistDetailContent(
     onLoadAll: () -> Unit = {},
     /** 顶栏「⋮」菜单项(如 取消订阅/删除收藏夹);空则不出「⋮」。 */
     menuActions: List<Pair<String, () -> Unit>> = emptyList(),
+    /** 多选模式批量动作(2026-10-15 加);null=不出「批量管理」入口。 */
+    batchActions: BatchActions? = null,
 ) {
     // 搜索态:顶栏换成搜索框,列表隐藏头部只渲染过滤结果
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var moreExpanded by remember { mutableStateOf(false) }
+    // 多选模式(2026-10-15 用户定版:**参考已下载页**——顶栏「多选」进入,顶栏换已选计数,
+    // 行首出勾选圈,返回退出;不常驻勾选圈)。操作栏浮出时定位钮隐藏(防重叠)
+    var selecting by remember { mutableStateOf(false) }
+    val selected = remember { mutableStateOf(setOf<String>()) }
+    // 头部「下载」确认弹窗:批量下载太重(大合集几百首),先问再入队(2026-10-15 用户要求)
+    var showDownloadConfirm by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         // 沉浸式背景:歌单封面放大模糊 + 压暗,头部与列表浮在上面(参考播放页毛玻璃先例)。
@@ -173,6 +191,16 @@ fun PlaylistDetailContent(
                                     expanded = moreExpanded,
                                     onDismissRequest = { moreExpanded = false },
                                 ) {
+                                    if (batchActions != null && songs.isNotEmpty()) {
+                                        DropdownMenuItem(
+                                            text = { Text("批量管理") },
+                                            onClick = {
+                                                moreExpanded = false
+                                                selecting = true
+                                                selected.value = emptySet()
+                                            },
+                                        )
+                                    }
                                     menuActions.forEach { (label, action) ->
                                         DropdownMenuItem(
                                             text = { Text(label) },
@@ -255,8 +283,10 @@ fun PlaylistDetailContent(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 120.dp),
+                    // 多选态底部有操作栏:bottom padding 加大避让(多选态无迷你条熔接问题,栏浮在列表上)
+                    contentPadding = PaddingValues(bottom = if (selecting) 200.dp else 120.dp),
                 ) {
+
                     item(key = "header") {
                         DetailHeader(
                             cover = cover,
@@ -264,7 +294,16 @@ fun PlaylistDetailContent(
                             title = title,
                             subtitle = subtitle,
                             onPlayAll = { if (onPlayAll != null) onPlayAll(songs) else onPlay(songs, 0) },
-                            onShuffleAll = { onShuffle(songs) },
+                            onDownloadAll = { if (onDownloadAllParam != null) showDownloadConfirm = true },
+                            onEnterSelect = {
+                                if (selecting) {
+                                    selecting = false
+                                    selected.value = emptySet()
+                                } else {
+                                    selecting = true
+                                }
+                            },
+                            selectActive = selecting,
                         )
                     }
                     if (loadingHint != null) {
@@ -278,19 +317,32 @@ fun PlaylistDetailContent(
                         }
                     }
                     itemsIndexed(songs, key = { _, s -> s.bvid }) { index, song ->
-                        NumberedSongRow(
-                            number = index + 1,
-                            song = song,
-                            isCurrent = song.mediaId == currentMediaId,
-                            isPlaying = isPlaying,
-                            onClick = { onPlay(songs, index) },
-                            onPlayNext = onPlayNext,
-                            onAddToQueue = onAddToQueue,
-                            onFavorite = onFavorite,
-                            onDownload = onDownload,
-                            onRemove = onRemoveSong,
-                            removeSongLabel = removeSongLabel,
-                        )
+                        if (selecting) {
+                            SelectableSongRow(
+                                song = song,
+                                isCurrent = song.mediaId == currentMediaId,
+                                isSelected = song.bvid in selected.value,
+                                onToggle = {
+                                    selected.value =
+                                        if (song.bvid in selected.value) selected.value - song.bvid
+                                        else selected.value + song.bvid
+                                },
+                            )
+                        } else {
+                            NumberedSongRow(
+                                number = index + 1,
+                                song = song,
+                                isCurrent = song.mediaId == currentMediaId,
+                                isPlaying = isPlaying,
+                                onClick = { onPlay(songs, index) },
+                                onPlayNext = onPlayNext,
+                                onAddToQueue = onAddToQueue,
+                                onFavorite = onFavorite,
+                                onDownload = onDownload,
+                                onRemove = onRemoveSong,
+                                removeSongLabel = removeSongLabel,
+                            )
+                        }
                     }
                     if (loadingMore) {
                         item {
@@ -303,7 +355,42 @@ fun PlaylistDetailContent(
                         }
                     }
                 }
-                if (locateIndex >= 0) {
+                if (selecting && batchActions != null) {
+                    Box(Modifier.align(Alignment.BottomCenter)) {
+                        BatchActionBar(
+                            selectedCount = selected.value.size,
+                            actions = batchActions,
+                            selectedSongs = songs.filter { it.bvid in selected.value },
+                            onDone = {
+                                selecting = false
+                                selected.value = emptySet()
+                            },
+                            onSelectAll = { selected.value = songs.map { it.bvid }.toSet() },
+                            onInvert = {
+                                val all = songs.map { it.bvid }.toSet()
+                                selected.value = all - selected.value
+                            },
+                        )
+                    }
+                }
+                // 头部「下载」确认:明确告知会把已加载的全部 N 首入队
+                if (showDownloadConfirm && onDownloadAllParam != null) {
+                    AlertDialog(
+                        onDismissRequest = { showDownloadConfirm = false },
+                        title = { Text("下载整个歌单?") },
+                        text = { Text("将把已加载的 ${songs.size} 首歌全部加入下载队列(已下载的会自动跳过)。") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showDownloadConfirm = false
+                                onDownloadAllParam?.invoke(songs)
+                            }) { Text("下载") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showDownloadConfirm = false }) { Text("取消") }
+                        },
+                    )
+                }
+                if (locateIndex >= 0 && !selecting) {
                     // 「定位当前播放」悬浮圆钮:压在列表右下角(迷你条上方),与首页同款交互。
                     // 半透明底不抢列表内容;歌单/合集都可定位——「浏览到几千首找当前曲」是真实痛点。
                     Box(
@@ -331,7 +418,8 @@ fun PlaylistDetailContent(
     }
 }
 
-/** 头部:大方封面 + 右侧元信息/大标题/UP 名;下方「播放(黄)/随机播放(灰)」双胶囊。 */
+/** 头部:大方封面 + 右侧元信息/大标题/UP 名;下方「播放(黄)/下载/多选」三胶囊
+ *  (2026-10-15 用户改版:随机播放删除,空间让给下载与多选 —— 随机仍可从 ⋮/队列抽屉开)。 */
 @Composable
 private fun DetailHeader(
     cover: String?,
@@ -339,7 +427,10 @@ private fun DetailHeader(
     title: String,
     subtitle: String,
     onPlayAll: () -> Unit,
-    onShuffleAll: () -> Unit,
+    onDownloadAll: () -> Unit,
+    onEnterSelect: () -> Unit,
+    /** 多选进行中:胶囊高亮 + 文案变「完成」(再点退出)。 */
+    selectActive: Boolean = false,
 ) {
     Column(
         Modifier
@@ -425,29 +516,60 @@ private fun DetailHeader(
                     )
                 }
             }
-            // 随机播放:深灰胶囊(随机开起后队列抽屉的模式胶囊会同步显示「随机播放」)
+            // 下载:深灰胶囊(整队入下载队列,Manager 去重已下载/已在队)
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .height(44.dp)
                     .clip(RoundedCornerShape(50))
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .clickable(onClick = onShuffleAll),
+                    .clickable(onClick = onDownloadAll),
                 contentAlignment = Alignment.Center,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        Icons.Rounded.Shuffle,
+                        Icons.Rounded.Download,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(5.dp))
                     Text(
-                        "随机播放",
+                        "下载",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+            // 多选开关:点击=行前出现勾选圈(原地多选,页面结构不变);再点=退出
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(
+                        if (selectActive) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    )
+                    .clickable(onClick = onEnterSelect),
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Filled.Checklist,
+                        contentDescription = null,
+                        tint = if (selectActive) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        if (selectActive) "完成" else "多选",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (selectActive) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurface,
                     )
                 }
             }
@@ -709,5 +831,168 @@ private fun SearchResults(
                 }
             }
         }
+    }
+}
+
+
+/**
+ * 多选模式的批量动作集(2026-10-15 加)。全部对「选中的曲目子集」操作;
+ * [onRemove] 为空(合集)时操作栏不渲染移除键,收藏夹/本地歌单各自传。
+ */
+data class BatchActions(
+    val onDownload: (List<Song>) -> Unit,
+    val onFavorite: (List<Song>) -> Unit,
+    val onPlayNext: (List<Song>) -> Unit,
+    val onAddToQueue: (List<Song>) -> Unit,
+    val onRemove: ((List<Song>) -> Unit)? = null,
+    /** 移除键文案(收藏夹=「从收藏夹移除」,本地歌单=「从歌单移除」)。 */
+    val removeLabel: String = "移除",
+)
+
+/**
+ * 多选态行(参考已下载页):序号位换成圆形勾选圈(选中=实心 primary+白勾,未选=描边圈),
+ * 点整行=切换选中;当前曲仍 primary 高亮标题,便于在多选里认出正在播的歌。
+ */
+@Composable
+private fun SelectableSongRow(
+    song: Song,
+    isCurrent: Boolean,
+    isSelected: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onToggle)
+            .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .clip(CircleShape)
+                .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                .then(
+                    if (isSelected) Modifier
+                    else Modifier.border(1.5.dp, MaterialTheme.colorScheme.onSurfaceVariant, CircleShape),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (isSelected) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                song.title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                listOfNotNull(
+                    song.artist.takeIf { it.isNotBlank() },
+                    (song.durationSec * 1000).formatClock(),
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * 多选态底部操作栏:浮在列表底部(覆盖层,非导航)。纯色扁平无阴影;
+ * 按钮横排,溢出可横向滚动;执行完回调 onDone 退出多选(动作本身由调用方反馈)。
+ */
+@Composable
+private fun BatchActionBar(
+    selectedCount: Int,
+    actions: BatchActions,
+    selectedSongs: List<Song>,
+    onDone: () -> Unit,
+    onSelectAll: () -> Unit = {},
+    onInvert: () -> Unit = {},
+) {
+    // 纵向紧凑:计数行 + 等宽按钮行(2026-10-15 用户实测横排+滚动把「下载/移除」挤没)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "已选 $selectedCount 首",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            // 全选/反选(原地多选无顶栏,这两键收在这里)
+            TextButton(onClick = onSelectAll, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text("全选", style = MaterialTheme.typography.labelMedium)
+            }
+            TextButton(onClick = onInvert, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text("反选", style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        val enabled = selectedCount > 0
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            BatchActionButton("下载", Modifier.weight(1f), enabled) {
+                actions.onDownload(selectedSongs)
+                onDone()
+            }
+            BatchActionButton("收藏", Modifier.weight(1f), enabled) {
+                actions.onFavorite(selectedSongs)
+                onDone()
+            }
+            BatchActionButton("下一首", Modifier.weight(1f), enabled) {
+                actions.onPlayNext(selectedSongs)
+                onDone()
+            }
+            BatchActionButton("入队", Modifier.weight(1f), enabled) {
+                actions.onAddToQueue(selectedSongs)
+                onDone()
+            }
+            actions.onRemove?.let { remove ->
+                BatchActionButton("移除", Modifier.weight(1f), enabled) {
+                    remove(selectedSongs)
+                    onDone()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BatchActionButton(label: String, modifier: Modifier = Modifier, enabled: Boolean, onClick: () -> Unit) {
+    // TextButton 默认水平 contentPadding 会吃掉等宽宽度,三字「下一首」被挤换行(用户实测)——压零 + maxLines=1
+    TextButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Clip)
     }
 }

@@ -15,6 +15,7 @@ import dev.avsong.domain.SongRepository
 import dev.avsong.data.BiliSongRepository
 import dev.avsong.player.PlayerController
 import dev.avsong.player.PlayerState
+import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import dev.avsong.data.BiliConstants
@@ -88,7 +89,8 @@ class MainViewModel(
     private val playHistoryStore: dev.avsong.data.PlayHistoryStore,
     val localPlaylistStore: dev.avsong.data.LocalPlaylistStore,
     private val downloadedStore: dev.avsong.data.DownloadedStore,
-    private val lyricRepository: LyricRepository = LyricRepository(),
+    // 换源弹窗要直接调 listCandidates/applyCandidate(不走 VM 方法,避免多一层透传)
+    val lyricRepository: LyricRepository = LyricRepository(),
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(MainUiState())
@@ -177,6 +179,12 @@ class MainViewModel(
                 }
             }
         }
+    }
+
+    /** 歌词换源落地:候选已在 Repository 缓存,这里只把 UI 状态切到新词(归属校验同上)。 */
+    fun replaceLyric(bvid: String, lines: List<LyricLine>) {
+        if (lastLyricMediaId != bvid || lines.isEmpty()) return
+        _state.update { it.copy(lyric = LyricUiState.Ready(bvid, lines)) }
     }
 
     // ---------- 首页发现区 ----------
@@ -614,6 +622,53 @@ class MainViewModel(
     }
 
     /**
+     * 一键取消收藏(播放页亮爱心点击,2026-10-15):B 站所有已收藏夹移出 + 所有本地歌单移出。
+     * 反馈经 pushNotice(成功/失败都要说,静默会像没点上)。
+     */
+    /** 一键取消收藏的 B 站侧结果(bvid → B 站半区是否仍亮);UI 乐观更新后以此校正。 */
+    private val _unfavResult = MutableStateFlow<Pair<String, Boolean>?>(null)
+    val unfavResult: StateFlow<Pair<String, Boolean>?> = _unfavResult.asStateFlow()
+    fun consumeUnfavResult() { _unfavResult.value = null }
+
+    fun unfavoriteEverywhere(bvid: String) {
+        viewModelScope.launch {
+            var removedLocal = 0
+            localPlaylistStore.playlists.value.forEach { pl ->
+                if (pl.tracks.any { it.bvid == bvid }) {
+                    localPlaylistStore.removeSong(pl.id, bvid)
+                    removedLocal++
+                }
+            }
+            var biliOk = true
+            var stillBili = false
+            try {
+                val aid = aidFor(bvid)
+                if (aid > 0) {
+                    val folderIds = favoriteRepository.checkFavorite(aid)
+                    folderIds.chunked(50).forEach { ids ->
+                        favoriteRepository.modify(aid, delIds = ids.joinToString(",") { it.toString() })
+                    }
+                    // 删除后再查一次真实状态:乐观更新的校正要用「是否仍收藏」,不是「请求是否成功」
+                    stillBili = favoriteRepository.checkFavorite(aid).isNotEmpty()
+                }
+            } catch (e: Exception) {
+                biliOk = false
+                stillBili = true // 请求挂了:状态未知,按仍收藏处理(爱心回滚,下次进页再校)
+            }
+            pushNotice(
+                when {
+                    biliOk && removedLocal > 0 -> "已取消收藏(含 $removedLocal 个本地歌单)"
+                    biliOk -> "已取消收藏"
+                    removedLocal > 0 -> "B 站取消失败,本地歌单已移出"
+                    else -> "取消收藏失败:网络异常"
+                },
+            )
+            // 乐观更新校正:B 站失败时爱心回滚为亮(本地半区已真实移出,StateFlow 自动同步)
+            _unfavResult.value = bvid to (biliOk && stillBili)
+        }
+    }
+
+    /**
      * 「下一首播放」(列表行长按):插到当前曲后面,不打断播放、不动现有队列。
      * 已在队列 = 移到当前曲后、当前曲本身 = 不动(PlayerController 内判定),提示相应区分。
      * 先设默认提示再下发指令:已连接时回调同步执行覆盖它,未连接时异步覆盖,终值都正确。
@@ -762,6 +817,91 @@ class MainViewModel(
         val manager = (context.applicationContext as AvSongApp).downloadManager
         val n = manager.enqueueAll(songs)
         _queueNotice.value = if (n > 0) "已加入下载队列 $n 首" else "没有可下载的新歌曲"
+    }
+
+    /**
+     * 队列多选批量下载:从 QueueEntry(bvid/title/artist/封面)重建 Song。
+     * 下载只要 bvid,不需要 aid。
+     */
+    fun downloadFromQueue(context: Context, entries: List<dev.avsong.player.QueueEntry>) {
+        downloadAll(
+            context,
+            entries.map { e ->
+                Song(bvid = e.mediaId, title = e.title, artist = e.artist, coverUrl = e.artworkUri)
+            },
+        )
+    }
+
+    /**
+     * 队列多选批量收藏:把全部选中歌加进同一个收藏夹组合([folderIds],多夹逗号拼)。
+     * B 站没有跨视频批量收藏 API:逐首 fetchAid → modify,串行 + 300ms 间隔防 -412 风控。
+     * 已在该夹组合的歌会 modify 失败?——不会,resource/deal 重复添加返回 code=0 幂等;
+     * 失败(网络/风控)计入汇总,结果走全局提示条。
+     */
+    fun favoriteFromQueue(entries: List<dev.avsong.player.QueueEntry>, folderIds: List<Long>) {
+        if (entries.isEmpty() || folderIds.isEmpty()) return
+        viewModelScope.launch {
+            val addIds = folderIds.joinToString(",")
+            var ok = 0
+            var fail = 0
+            for (e in entries) {
+                try {
+                    val aid = favoriteRepository.fetchAid(e.mediaId)
+                    if (aid <= 0) throw IOException("取 aid 失败")
+                    favoriteRepository.modify(aid, addIds = addIds)
+                    ok++
+                } catch (e: Exception) {
+                    fail++
+                }
+                delay(300)
+            }
+            _queueNotice.value = when {
+                fail == 0 -> "已收藏 $ok 首到 " + folderIds.size + " 个收藏夹"
+                ok == 0 -> "收藏失败,请稍后重试"
+                else -> "成功 $ok 首,失败 $fail 首(网络波动可重试)"
+            }
+        }
+    }
+
+    /**
+     * 歌单详情多选批量收藏(2026-10-15):Song 版,与 favoriteFromQueue 同策略
+     * (逐首 fetchAid→modify,300ms 间隔防 -412;resource/deal 幂等)。
+     */
+    fun favoriteSongs(songs: List<Song>, folderIds: List<Long>) {
+        if (songs.isEmpty() || folderIds.isEmpty()) return
+        viewModelScope.launch {
+            val addIds = folderIds.joinToString(",")
+            var ok = 0
+            var fail = 0
+            for (song in songs) {
+                try {
+                    val aid = if (song.aid > 0) song.aid else favoriteRepository.fetchAid(song.bvid)
+                    if (aid <= 0) throw java.io.IOException("取 aid 失败")
+                    favoriteRepository.modify(aid, addIds = addIds)
+                    ok++
+                } catch (e: Exception) {
+                    fail++
+                }
+                delay(300)
+            }
+            _queueNotice.value = when {
+                fail == 0 -> "已收藏 \$ok 首到 \${folderIds.size} 个收藏夹"
+                ok == 0 -> "收藏失败,请稍后重试"
+                else -> "成功 \$ok 首,失败 \$fail 首(网络波动可重试)"
+            }
+        }
+    }
+
+    /** 多选「下一首播放」:选中歌按列表顺序逐首插到当前曲后(保持相对顺序)。 */
+    fun playNextBatch(songs: List<Song>) {
+        if (songs.isEmpty()) return
+        viewModelScope.launch {
+            for (song in songs) {
+                if (song.aid > 0) aidCache[song.bvid] = song.aid
+                playerController.playNext(song.toMediaItem())
+            }
+            _queueNotice.value = "已把 \${songs.size} 首插入下一首播放"
+        }
     }
 
     /**

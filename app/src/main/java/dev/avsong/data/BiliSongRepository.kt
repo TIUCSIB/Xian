@@ -60,13 +60,30 @@ object BiliSongRepository : SongRepository {
         )
     }
 
-    /** 粘贴 BV 号 / av 号 / 分享链接 → 直接解析成单首(不走搜索接口)。 */
+    /** 粘贴 BV 号 / av 号 / b23.tv 短链 / 分享链接 → 直接解析成单首(不走搜索接口)。 */
     override suspend fun resolveDirect(query: String): Song? = withContext(Dispatchers.IO) {
-        val bvid = Regex("BV[0-9A-Za-z]{10}").find(query)?.value
+        val bvid: String? = Regex("BV[0-9A-Za-z]{10}").find(query)?.value
             ?: Regex("av(\\d+)", RegexOption.IGNORE_CASE).find(query)?.groupValues?.get(1)?.let { avToBvidBlocking(it) }
-            ?: return@withContext null
-        runCatching { viewToSongBlocking(bvid) }.getOrNull()
+            // b23.tv 短链(手机分享复制的都是它):跟随 302 拿最终 URL,从中抠 BV/av 号
+            ?: if (query.contains("b23.tv", ignoreCase = true)) resolveB23ShortLink(query) else null
+        bvid?.let { runCatching { viewToSongBlocking(it) }.getOrNull() }
     }
+
+    /** b23.tv 短链解析:GET 跟随重定向到最终 URL,从中提取 BV/av 号。失败返回 null(交给普通搜索)。 */
+    private fun resolveB23ShortLink(query: String): String? = runCatching {
+        val shortUrl = Regex("https?://b23\\.tv/\\S+").find(query)?.value
+            ?: "https://b23.tv/" + query.substringAfter("b23.tv/").trim().trimEnd('/', ',')
+        val request = Request.Builder().url(shortUrl)
+            .header("User-Agent", BiliConstants.UA)
+            .header("Referer", BiliConstants.REFERER)
+            .get().build()
+        BiliHttp.client.newCall(request).execute().use { resp ->
+            val finalUrl = resp.request.url.toString()
+            Regex("BV[0-9A-Za-z]{10}").find(finalUrl)?.value
+                ?: Regex("av(\\d+)", RegexOption.IGNORE_CASE).find(finalUrl)?.groupValues?.get(1)
+                    ?.let { avToBvidBlocking(it) }
+        }
+    }.getOrNull()
 
     /**
      * 搜索联想词(s.search.bilibili.com/main/suggest,匿名可用)。

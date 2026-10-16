@@ -279,24 +279,14 @@ private fun FeaturedSection(
             .fillMaxWidth()
             .padding(bottom = 18.dp),
     ) {
-        // 黄色背景块(层级在下):圆角块 + 左上 Discover 标题
+        // 黄色背景块(层级在下):圆角块;顶部标题区留白占位(用户要求 Discover 不显示但保高度)
         Box(
             Modifier
                 .padding(start = YELLOW_SIDE_MARGIN, end = YELLOW_SIDE_MARGIN, top = 8.dp)
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp))
                 .height(TITLE_TOP + TITLE_ROW_H + CARD_H * CARD_OVER_YELLOW),
-        ) {
-            Text(
-                "Discover",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = YELLOW_INNER_H, end = YELLOW_INNER_H, top = TITLE_TOP),
-            )
-        }
+        )
 
         // 前三首轮播(层级在黄块之上);小卡宽 + 右缘宽露边
         HorizontalPager(

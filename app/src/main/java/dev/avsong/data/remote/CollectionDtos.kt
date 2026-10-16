@@ -34,6 +34,8 @@ data class SeasonMeta(
     val title: String = "",
     val total: Int = 0,
     val cover: String = "",
+    /** 合集简介(seasons_archives_list 的 meta 块;可能缺省)。 */
+    val intro: String = "",
 )
 
 @Serializable

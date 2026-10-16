@@ -13,20 +13,26 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -103,10 +109,15 @@ fun PlaylistScreen(
     val state by vm.state.collectAsState()
     // 仅用于判断登录态:未登录时收藏夹必然拉不到,错误区给「去登录」比干巴巴的「重试」有用
     val loggedIn = rememberLoginViewModel().state.collectAsState().value is LoginUiState.LoggedIn
+    // 右上「+」动作菜单(网络 tab):添加合集 / 新建收藏夹
+    var plusMenu by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
     var showAddCollection by remember { mutableStateOf(false) }
     // 长按菜单选中的动作 → 确认弹窗(破坏性操作不直接执行)
     var pendingDelete by remember { mutableStateOf<FavoriteRepository.Folder?>(null) }
+    // 两级 tab(2026-10-15 用户定版,参考设计图):0=网络歌单(合集+收藏夹) 1=本地歌单;
+    // 网络歌单内再按分区标题分组(合集/我创建的/收藏的),内容一律列表行样式
+    var tab by remember { mutableStateOf(0) }
     // 本地歌单:新建对话框 / 待删除(确认)/ 待重命名(输入)
     var showCreateLocal by remember { mutableStateOf(false) }
     var pendingDeleteLocal by remember { mutableStateOf<dev.avsong.data.LocalPlaylist?>(null) }
@@ -140,205 +151,223 @@ fun PlaylistScreen(
                 )
             },
         ) {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                // 黄色大标题横幅已按用户要求去掉:它带的「新建收藏夹」+ 与合集区的 + 冗余,
-                // 新建入口收进「我创建的」标题行(2026-10-11)
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 120.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                // 本地自建歌单(2026-10-15 加,放最顶上):纯本地数据,不依赖登录/网络。
-                // 封面 = 首曲 coverUrl 兜底(与收藏夹详情同款);徽标 = 曲目数
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 6.dp, end = 2.dp, top = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "本地歌单 (${localPlaylists.size})",
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        IconButton(onClick = { showCreateLocal = true }) {
-                            Icon(Icons.Filled.Add, contentDescription = "新建本地歌单")
-                        }
-                    }
-                }
-                items(localPlaylists, key = { "local-${it.id}" }) { pl ->
-                    PlaylistCard(
-                        title = pl.name,
-                        cover = pl.tracks.firstOrNull()?.coverUrl,
-                        count = pl.tracks.size,
-                        onOpen = { onOpenLocalPlaylist(pl) },
-                        onPlay = { onPlayLocalPlaylist(pl) },
-                        onPause = onPlayPause,
-                        isCurrent = playingId == "local:${pl.id}",
-                        isPlaying = player.isPlaying,
-                        menuActions = listOf(
-                            "重命名歌单" to { pendingRenameLocal = pl },
-                            "删除歌单" to { pendingDeleteLocal = pl },
-                        ),
-                    )
-                }
-
-                // UP 主合集:本地订阅(粘链接添加)+ B 站「我追的合集」自动同步
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 6.dp, end = 2.dp, top = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "合集 (${allCollections.size})",
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        IconButton(onClick = {
-                            vm.clearCollectionError()
-                            showAddCollection = true
-                        }) {
-                            Icon(Icons.Filled.Add, contentDescription = "添加合集")
-                        }
-                    }
-                }
-                if (state.collectionError != null && !showAddCollection) {
-                    // 对话框关闭后残留的网络错误,贴在区块下提示
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Text(
-                            state.collectionError!!,
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                }
-                items(allCollections, key = { "col-${it.mid}-${it.seasonId}" }) { collection ->
-                    PlaylistCard(
-                        title = collection.title,
-                        cover = collection.cover,
-                        count = collection.total,
-                        onOpen = { onOpenCollection(collection) },
-                        onPlay = { onPlayCollection(collection) },
-                        onPause = onPlayPause,
-                        isCurrent = playingId == "collection:${collection.seasonId}",
-                        isPlaying = player.isPlaying,
-                        // 长按 → 取消订阅(同时取消 B 站「追合集」+ 移除本地,确认后执行防误触)
-                        menuActions = listOf("取消订阅" to { pendingUnsub = collection }),
-                    )
-                }
-
-                when {
-                    // 首次加载才铺骨架;下拉刷新时(已有内容)保持列表可见,进度在顶部指示器
-                    state.loading && !hasContent -> item(span = { GridItemSpan(maxLineSpan) }) {
-                        SkeletonGrid(rows = 3)
-                    }
-
-                    // 错误只在没有内容可展示时占屏;刷新失败时保留旧列表,不把用户内容换走
-                    state.error != null && !hasContent -> item(span = { GridItemSpan(maxLineSpan) }) {
-                        Column(
-                            Modifier.fillMaxWidth().padding(32.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
+            // 顶栏:两个大 tab(左对齐文字式)+ 右上「+」(动作按 tab 分发)
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.weight(1f)) {
+                        listOf("网络歌单" to 0, "本地歌单" to 1).forEach { (label, i) ->
+                            val active = tab == i
                             Text(
-                                state.error!!,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
+                                label,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                color = if (active) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable(indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) { tab = i }
+                                    .padding(vertical = 6.dp),
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = vm::refresh) {
-                                    Text("重试", color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    // 右上「+」:网络=弹动作菜单(添加合集/新建收藏夹),本地=直接新建本地歌单
+                    Box {
+                        IconButton(onClick = { if (tab == 0) plusMenu = true else showCreateLocal = true }) {
+                            Icon(
+                                Icons.Filled.Add,
+                                contentDescription = if (tab == 0) "添加" else "新建本地歌单",
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        if (plusMenu) {
+                            DropdownMenu(expanded = plusMenu, onDismissRequest = { plusMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("添加合集") },
+                                    onClick = {
+                                        plusMenu = false
+                                        vm.clearCollectionError()
+                                        showAddCollection = true
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("新建收藏夹") },
+                                    onClick = {
+                                        plusMenu = false
+                                        showCreate = true
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 120.dp),
+                ) {
+                    if (tab == 1) {
+                        // ---- 本地歌单(tab 自带名字,不再重复标题行;右上 + = 新建) ----
+                        if (localPlaylists.isEmpty()) {
+                            item {
+                                Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
+                                    Text("还没有本地歌单,点右上 + 新建", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                if (!loggedIn) {
+                            }
+                        }
+                        items(localPlaylists, key = { "local-${it.id}" }) { pl ->
+                            PlaylistRow(
+                                title = pl.name,
+                                subtitle = "${pl.tracks.size} 首",
+                                cover = pl.tracks.firstOrNull()?.coverUrl,
+                                isCurrent = playingId == "local:${pl.id}",
+                                isPlaying = player.isPlaying,
+                                onClick = { onOpenLocalPlaylist(pl) },
+                                onPlayPause = onPlayPause,
+                                menuActions = listOf(
+                                    "重命名歌单" to { pendingRenameLocal = pl },
+                                    "删除歌单" to { pendingDeleteLocal = pl },
+                                ),
+                            )
+                        }
+                    } else {
+                        // ---- 网络歌单 ----
+                        // 未登录:整页居中登录态(不显示任何分区标题/空态,避免半页空)
+                        if (!loggedIn && !state.loading) {
+                            item {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(vertical = 64.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    Text(
+                                        "请先登录 B 站账号",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Spacer(Modifier.height(10.dp))
+                                    Text(
+                                        "登录后可查看收藏夹与订阅的合集",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Spacer(Modifier.height(14.dp))
                                     TextButton(onClick = onLogin) {
                                         Text("去登录", color = MaterialTheme.colorScheme.primary)
                                     }
                                 }
                             }
-                        }
-                    }
-
-                    else -> {
-                        // 「我创建的」标题行带「新建收藏夹」+;空夹时也在,否则新建入口消失
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 6.dp, end = 2.dp, top = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    "我创建的 (${state.folders.size})",
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                                IconButton(onClick = { showCreate = true }) {
-                                    Icon(Icons.Filled.Add, contentDescription = "新建收藏夹")
+                        } else {
+                            // 收藏夹区 = 我创建的 + 收藏的(都是收藏夹,不分来源;「收藏的」多余已合并)
+                            val allFolders = state.folders + state.subscribed
+                            val hasNet = allCollections.isNotEmpty() || allFolders.isNotEmpty()
+                            // 加载中且什么都没有:骨架
+                            if (state.loading && !hasNet) {
+                                item { SkeletonGrid(rows = 4) }
+                            } else if (state.error != null && !hasNet) {
+                                item {
+                                    Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(state.error!!, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            TextButton(onClick = vm::refresh) { Text("重试", color = MaterialTheme.colorScheme.primary) }
+                                            if (!loggedIn) {
+                                                TextButton(onClick = onLogin) { Text("去登录", color = MaterialTheme.colorScheme.primary) }
+                                            }
+                                        }
+                                    }
                                 }
-                            }
-                        }
-                        if (state.actionError != null) {
-                            // 删除收藏夹失败(网络/接口拒绝)时的就地提示,不让操作静默失败
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                Text(
-                                    state.actionError!!,
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            }
-                        }
-                        items(state.folders, key = { "c${it.id}" }) { folder ->
-                            PlaylistCard(
-                                title = folder.title,
-                                cover = folder.cover,
-                                count = folder.mediaCount,
-                                isPrivate = folder.isPrivate,
-                                onOpen = { onOpenFolder(folder) },
-                                onPlay = { onPlayFolder(folder) },
-                                onPause = onPlayPause,
-                                isCurrent = playingId == "folder:${folder.id}",
-                                isPlaying = player.isPlaying,
-                                // 长按 → 删除收藏夹(B 站远端破坏性操作,必须确认)
-                                menuActions = listOf("删除收藏夹" to { pendingDelete = folder }),
-                            )
-                        }
-                        if (state.subscribed.isNotEmpty()) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                SectionHeader("收藏的 (${state.subscribed.size})")
-                            }
-                            items(state.subscribed, key = { "s${it.id}" }) { folder ->
-                                PlaylistCard(
-                                    title = folder.title,
-                                    cover = folder.cover,
-                                    count = folder.mediaCount,
-                                    isPrivate = folder.isPrivate,
-                                    onOpen = { onOpenFolder(folder) },
-                                    onPlay = { onPlayFolder(folder) },
-                                    onPause = onPlayPause,
-                                    isCurrent = playingId == "folder:${folder.id}",
-                                    isPlaying = player.isPlaying,
-                                )
-                            }
-                        }
-                        if (state.folders.isEmpty() && state.subscribed.isEmpty()) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                Box(
-                                    Modifier.fillMaxWidth().padding(48.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text(
-                                        "还没有收藏夹,点上面的 + 新建",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
+                            } else {
+                                // 空态:无任何歌单时,整页提示 + 两个动作入口
+                                if (allCollections.isEmpty() && allFolders.isEmpty() && !state.loading) {
+                                    item {
+                                        Column(
+                                            Modifier.fillMaxWidth().padding(vertical = 64.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                        ) {
+                                            Text(
+                                                "还没有歌单",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                            Spacer(Modifier.height(14.dp))
+                                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                                TextButton(onClick = {
+                                                    vm.clearCollectionError()
+                                                    showAddCollection = true
+                                                }) { Text("添加合集", color = MaterialTheme.colorScheme.primary) }
+                                                TextButton(onClick = { showCreate = true }) { Text("新建收藏夹", color = MaterialTheme.colorScheme.primary) }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 合集区:只在有内容/出错时显示(空态已整页处理)
+                                if (allCollections.isNotEmpty() || state.collectionError != null) {
+                                    item { SectionHeader("合集 (${allCollections.size})") }
+                                    if (state.collectionError != null && !showAddCollection) {
+                                        item {
+                                            Text(
+                                                state.collectionError!!,
+                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
+                                    }
+                                    if (allCollections.isEmpty()) {
+                                        item {
+                                            Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
+                                                Text("还没有合集,点标题行 + 添加(粘贴 UP 主合集链接)", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                    }
+                                    items(allCollections, key = { "col-${it.mid}-${it.seasonId}" }) { collection ->
+                                        PlaylistRow(
+                                            title = collection.title,
+                                            subtitle = "${collection.total} 首",
+                                            cover = collection.cover,
+                                            isCurrent = playingId == "collection:${collection.seasonId}",
+                                            isPlaying = player.isPlaying,
+                                            onClick = { onOpenCollection(collection) },
+                                            onPlayPause = onPlayPause,
+                                            menuActions = listOf("取消订阅" to { pendingUnsub = collection }),
+                                        )
+                                    }
+                                }
+
+                                // 收藏夹区:同规则,空时整块不显示
+                                if (allFolders.isNotEmpty()) {
+                                    item { SectionHeader("收藏夹 (${allFolders.size})") }
+                                    if (state.actionError != null) {
+                                        item {
+                                            Text(
+                                                state.actionError!!,
+                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
+                                    }
+                                    itemsIndexed(allFolders, key = { _, f -> "fold-${f.id}" }) { i, folder ->
+                                        val mine = i < state.folders.size
+                                        PlaylistRow(
+                                            title = folder.title,
+                                            subtitle = "${folder.mediaCount} 首",
+                                            cover = folder.cover,
+                                            isPrivate = folder.isPrivate,
+                                            isCurrent = playingId == "folder:${folder.id}",
+                                            isPlaying = player.isPlaying,
+                                            onClick = { onOpenFolder(folder) },
+                                            onPlayPause = onPlayPause,
+                                            menuActions = if (mine) {
+                                                listOf("删除收藏夹" to { pendingDelete = folder })
+                                            } else {
+                                                emptyList()
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -447,180 +476,142 @@ fun PlaylistScreen(
     }
 }
 
-/** 分区小标题(我创建的/收藏的),整行占满。 */
+/** 分区标题(合集/收藏夹):与顶部 tabs 左边距一致(20dp),不带行尾动作(动作收敛到右上 +)。 */
 @Composable
 private fun SectionHeader(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 6.dp, top = 8.dp),
+        modifier = Modifier.padding(start = 20.dp, top = 10.dp, bottom = 4.dp),
     )
 }
 
-/**
- * 歌单网格卡片:上方正方形封面 + 下方标题。
- * 封面底部有向上渐变的黑纱遮罩,右下角裸白色图标(无底色)直接播整个歌单;
- * **正在播这个歌单时图标换成动画音波条、点击变暂停;暂停中显示播放三角、点击续播**
- * (用户 2026-10-14 要求:播放态别一直显示播放键;交互对齐首页精选卡)。
- * 徽标(左上)= 项数。
- * [menuActions] 非空时长按卡片弹操作菜单(合集=取消订阅,自建夹=删除收藏夹);
- * 菜单只负责挑动作,破坏性操作的真实确认在调用方的 AlertDialog。
- */
+/** 歌单列表行(2026-10-15 用户定版,参考设计图):64dp 方图 + 标题 + 副标题「N 首」+ 右 chevron。
+ * 正在播本歌单时 chevron 位换音波条(播放中)/播放三角(暂停),点击=暂停/续播;
+ * 行尾「>」= 进入详情;长按行弹 [menuActions]。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PlaylistCard(
+private fun PlaylistRow(
     title: String,
+    subtitle: String,
     cover: String?,
-    count: Int,
     isPrivate: Boolean = false,
-    onOpen: () -> Unit,
-    onPlay: () -> Unit,
-    onPause: () -> Unit = {},
     isCurrent: Boolean = false,
     isPlaying: Boolean = false,
+    onClick: () -> Unit,
+    onPlayPause: () -> Unit,
     menuActions: List<Pair<String, () -> Unit>> = emptyList(),
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    Column(
+    Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
             .combinedClickable(
-                onClick = onOpen,
+                onClick = onClick,
                 onLongClick = { if (menuActions.isNotEmpty()) menuExpanded = true },
-            ),
+            )
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f)
-                .clip(RoundedCornerShape(14.dp))
+                .size(56.dp)
+                .clip(RoundedCornerShape(10.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
         ) {
             if (cover != null) {
-                AsyncImage(
-                    cover,
-                    null,
-                    Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                )
+                AsyncImage(cover, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             } else {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Rounded.Folder,
-                        null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(40.dp),
-                    )
-                }
-            }
-            // 底部往上渐变的黑纱遮罩:托住右下角白色播放图标(用户要求的例外,全局禁渐变不含此处)
-            Box(
-                Modifier
-                    .matchParentSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0.45f to Color.Transparent,
-                            1f to Color.Black.copy(alpha = 0.55f),
-                        ),
-                    ),
-            )
-            // 左上角数字徽标(半透明黑纱胶囊,纯色扁平无阴影)
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(6.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
                 Icon(
-                    Icons.Rounded.PlayArrow,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(12.dp),
-                )
-                Text(
-                    formatPlaylistCount(count),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White,
+                    Icons.Rounded.MusicNote,
+                    null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(26.dp),
                 )
             }
-            // 右下播放钮:裸白色图标(无底色),对比度靠底部渐变遮罩;
-            // clip 圆形必须保留——没有它 clickable 的涟漪会画成方形。
-            // 正在播本歌单 → 音波动画(点击暂停);暂停中 → 播放三角(点击续播);
-            // 未在播 → 播放三角(点击播整个歌单)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isPrivate) {
+                    Icon(
+                        Icons.Filled.Lock,
+                        contentDescription = "私密",
+                        modifier = Modifier.size(13.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        if (isCurrent) {
+            // 正在播本歌单:chevron 位换播放态控件(音波条=播放中,三角=暂停;点击=暂停/续播)
             Box(
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 6.dp, bottom = 2.dp)
-                    .size(40.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
-                    .clickable(onClick = if (isCurrent && isPlaying) onPause else onPlay),
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        onClick = onPlayPause,
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
-                if (isCurrent && isPlaying) {
-                    PlayingEqualizer(
-                        Modifier.size(width = 22.dp, height = 16.dp),
-                        onArtwork = true,
-                    )
+                if (isPlaying) {
+                    PlayingEqualizer(Modifier.size(width = 18.dp, height = 14.dp))
                 } else {
                     Icon(
                         Icons.Rounded.PlayArrow,
-                        contentDescription = if (isCurrent) "继续播放" else "播放整个歌单",
-                        tint = Color.White,
-                        modifier = Modifier.size(30.dp),
+                        contentDescription = "继续播放",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
                     )
                 }
             }
-        }
-        Row(
-            modifier = Modifier.padding(start = 2.dp, top = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (isPrivate) {
-                Icon(
-                    Icons.Filled.Lock,
-                    contentDescription = "私密",
-                    modifier = Modifier.size(12.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.width(3.dp))
-            }
-            Text(
-                title,
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Medium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+        } else {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = "查看歌单详情",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(22.dp),
             )
         }
-        // 长按菜单:锚在卡片左上角(DropdownMenu 是 popup,不占布局空间)
-        if (menuActions.isNotEmpty()) {
-            DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = { menuExpanded = false },
-            ) {
-                menuActions.forEach { (label, action) ->
-                    DropdownMenuItem(
-                        text = { Text(label) },
-                        onClick = {
-                            menuExpanded = false
-                            action()
-                        },
-                    )
-                }
+    }
+    // 长按菜单
+    if (menuExpanded) {
+        DropdownMenu(expanded = true, onDismissRequest = { menuExpanded = false }) {
+            menuActions.forEach { (label, action) ->
+                DropdownMenuItem(
+                    text = { Text(label) },
+                    onClick = {
+                        menuExpanded = false
+                        action()
+                    },
+                )
             }
         }
     }
 }
 
-/** 徽标数字:1 万以上按「x.x万」缩写(网易云歌单卡的读法)。 */
-private fun formatPlaylistCount(count: Int): String {
-    if (count < 10000) return count.toString()
-    val dec = (count / 1000).toDouble() / 10.0
-    return if (dec % 1.0 == 0.0) "${dec.toInt()}万" else "${dec}万"
-}
 
 /**
  * 新建本地歌单对话框:只要一个名称(简介/公开开关是 B 站概念,本地不需要)。

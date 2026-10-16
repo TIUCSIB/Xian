@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 系统启动页图标位:全透明 drawable。
+     Android 12+ 系统启动页无法去除,但可把图标置空——只剩深紫底色一闪而过,
+     紧接 app 内的屋顶场景图淡入,避免「图标页→场景页」两个 splash 的割裂感 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#00000000" />
+    <size android:width="1dp" android:height="1dp" />
+</shape>

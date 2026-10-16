@@ -33,6 +33,7 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
         val id: Long,
         val title: String,
         val cover: String?,
+        val intro: String = "",
         val mediaCount: Int,
         val isPrivate: Boolean,
         val ownerMid: Long,
@@ -51,6 +52,8 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
     data class FolderContents(
         val songs: List<Song>,
         val hasMore: Boolean,
+        /** 收藏夹简介(resource/list 的 info 块,每页都带)。 */
+        val intro: String = "",
     )
 
     private val mid: Long
@@ -78,6 +81,7 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
                     id = f.id,
                     title = f.title,
                     cover = f.cover?.fixProtocol(),
+                    intro = f.intro,
                     mediaCount = f.mediaCount,
                     isPrivate = f.attr != 0,
                     ownerMid = f.mid,
@@ -170,6 +174,7 @@ class FavoriteRepository(private val auth: dev.avsong.data.auth.AuthStore) {
             if (resp.code != 0) throw IOException("收藏夹内容 code=${resp.code}")
             val d = resp.data
             FolderContents(
+                intro = d?.info?.intro.orEmpty(),
                 songs = d?.medias.orEmpty().filter { it.bvid.isNotBlank() }.map { m ->
                     Song(
                         bvid = m.bvid,

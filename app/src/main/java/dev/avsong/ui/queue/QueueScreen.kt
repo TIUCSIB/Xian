@@ -1,6 +1,7 @@
 package dev.avsong.ui.queue
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,8 +17,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
@@ -47,6 +50,9 @@ import dev.avsong.ui.common.StateHint
  * [isPlaying] 当前曲正在播放时行首显示音波条动画;[showReorder] = false 时隐藏上下移
  * (迷你条抽屉用:排序功能不需要,腾出横向空间)。
  * [listState] 由调用方传入以便控制滚动位置(迷你条抽屉打开时滚到当前曲)。
+ *
+ * 多选模式([selectionMode]):点行=勾/取消(不再切播),行首显示勾选圈;
+ * 批量操作(下载/收藏)由调用方在功能条渲染,本组件只负责勾选状态与回调。
  */
 @Composable
 fun QueueContent(
@@ -59,6 +65,10 @@ fun QueueContent(
     isPlaying: Boolean = false,
     showReorder: Boolean = true,
     listState: LazyListState = rememberLazyListState(),
+    /** 多选模式开合与选中集合由调用方持有(功能条的批量按钮要读取 N)。 */
+    selectionMode: Boolean = false,
+    selected: Set<Int> = emptySet(),
+    onToggleSelect: (Int) -> Unit = {},
 ) {
     if (queue.isEmpty()) {
         Box(modifier, contentAlignment = Alignment.Center) {
@@ -79,10 +89,12 @@ fun QueueContent(
                     showReorder = showReorder,
                     canMoveUp = index > 0,
                     canMoveDown = index < queue.lastIndex,
-                    onClick = { onPlayAt(index) },
+                    onClick = { if (selectionMode) onToggleSelect(index) else onPlayAt(index) },
                     onRemove = { onRemoveAt(index) },
                     onMoveUp = { onMove(index, index - 1) },
                     onMoveDown = { onMove(index, index + 1) },
+                    selectionMode = selectionMode,
+                    selected = index in selected,
                 )
             }
         }
@@ -102,6 +114,8 @@ private fun QueueRow(
     onRemove: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -109,8 +123,12 @@ private fun QueueRow(
             .padding(vertical = 3.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(
-                if (isCurrent) MaterialTheme.colorScheme.primaryContainer
-                else Color.Transparent,
+                when {
+                    // 多选模式:勾中的行 primaryContainer 垫底(与当前曲同色系,勾圈另给)
+                    selectionMode && selected -> MaterialTheme.colorScheme.primaryContainer
+                    isCurrent -> MaterialTheme.colorScheme.primaryContainer
+                    else -> Color.Transparent
+                },
             )
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -120,7 +138,34 @@ private fun QueueRow(
             modifier = Modifier.width(22.dp),
             contentAlignment = Alignment.Center,
         ) {
-            when {
+            if (selectionMode) {
+                // 勾选圈:勾中实心 primary + 白勾,未勾描边圈
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary
+                            else Color.Transparent,
+                        )
+                        .border(
+                            width = 1.5.dp,
+                            color = if (selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            shape = CircleShape,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (selected) {
+                        Icon(
+                            Icons.Rounded.Check,
+                            contentDescription = "已勾选",
+                            modifier = Modifier.size(13.dp),
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    }
+                }
+            } else when {
                 // 播放中:行首换成音波条动画;当前曲但暂停时保留播放三角(点行=续播)
                 isCurrent && isPlaying ->
                     PlayingEqualizer(modifier = Modifier.size(width = 16.dp, height = 12.dp))
@@ -174,34 +219,36 @@ private fun QueueRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        // 上移 / 下移(排序,迷你条抽屉不显示)/ 移除(紧凑触达区:48dp 三连会把标题挤到截断)
-        if (showReorder) {
-            IconButton(onClick = onMoveUp, enabled = canMoveUp, modifier = Modifier.size(32.dp)) {
+        // 上移 / 下移(排序,迷你条抽屉不显示)/ 移除:多选模式下全隐藏(防误触,行点击已是勾选)
+        if (!selectionMode) {
+            if (showReorder) {
+                IconButton(onClick = onMoveUp, enabled = canMoveUp, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Rounded.KeyboardArrowUp,
+                        contentDescription = "上移",
+                        modifier = Modifier.size(18.dp),
+                        tint = if (canMoveUp) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
+                    )
+                }
+                IconButton(onClick = onMoveDown, enabled = canMoveDown, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = "下移",
+                        modifier = Modifier.size(18.dp),
+                        tint = if (canMoveDown) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
+                    )
+                }
+            }
+            IconButton(onClick = onRemove, modifier = Modifier.size(36.dp)) {
                 Icon(
-                    Icons.Rounded.KeyboardArrowUp,
-                    contentDescription = "上移",
-                    modifier = Modifier.size(18.dp),
-                    tint = if (canMoveUp) MaterialTheme.colorScheme.onSurfaceVariant
-                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
+                    Icons.Rounded.Close,
+                    contentDescription = "移除",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
                 )
             }
-            IconButton(onClick = onMoveDown, enabled = canMoveDown, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    Icons.Rounded.KeyboardArrowDown,
-                    contentDescription = "下移",
-                    modifier = Modifier.size(18.dp),
-                    tint = if (canMoveDown) MaterialTheme.colorScheme.onSurfaceVariant
-                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
-                )
-            }
-        }
-        IconButton(onClick = onRemove, modifier = Modifier.size(36.dp)) {
-            Icon(
-                Icons.Rounded.Close,
-                contentDescription = "移除",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp),
-            )
         }
     }
 }

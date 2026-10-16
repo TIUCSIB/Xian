@@ -47,6 +47,7 @@ object CollectionRepository {
         val title: String,
         val cover: String?,
         val total: Int,
+        val intro: String = "",
     )
 
     data class Page(
@@ -91,6 +92,7 @@ object CollectionRepository {
                         title = it.title.ifBlank { it.name }.ifBlank { "未命名合集" },
                         cover = it.cover.fixProtocol(),
                         total = it.total,
+                        intro = it.intro,
                     )
                 },
                 songs = data.archives.mapNotNull { a ->

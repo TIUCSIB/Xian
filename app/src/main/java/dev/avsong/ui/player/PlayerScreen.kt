@@ -2,7 +2,9 @@ package dev.avsong.ui.player
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -38,6 +40,7 @@ import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material3.CircularProgressIndicator
@@ -56,6 +59,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -96,7 +100,7 @@ import kotlin.math.roundToLong
  * 底部叠两张深灰圆角卡片(信息卡 + 控制卡),播放键为柠檬黄实心圆。
  * 纯色扁平:无阴影、无渐变、无光晕。进度用本地 ticker 每秒采样。
  */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun PlayerScreen(
     state: PlayerState,
@@ -113,32 +117,49 @@ fun PlayerScreen(
     localPlaylists: List<dev.avsong.data.LocalPlaylist>? = null,
     /** 勾选/取消本地歌单(checked=当前是否已在);当前曲快照由本页从 state 组装。 */
     onToggleLocal: ((dev.avsong.data.LocalPlaylist, Boolean) -> Unit)? = null,
+    /** 本地歌单列表 StateFlow(爱心「或本地歌单」判定用;与 localPlaylists 同源)。 */
+    localPlaylistsState: kotlinx.coroutines.flow.StateFlow<List<dev.avsong.data.LocalPlaylist>>? = null,
+    /** 亮爱心点击=一键取消收藏:B 站全部已收藏夹 + 所有本地歌单全移出;null=点击仍弹管理弹窗。 */
+    onUnfavoriteAll: (() -> Unit)? = null,
+    /** 一键取消收藏的 B 站侧结果(bvid→B 站半区是否仍亮);失败时爱心回滚。 */
+    unfavResult: Pair<String, Boolean>? = null,
+    /** 校正结果已展示,消费置空。 */
+    onConsumeUnfavResult: () -> Unit = {},
     /** 本地歌单区就地新建。 */
     onCreateLocal: ((String) -> Unit)? = null,
     /** 热评展示:danmakuEnabled 开关 + danmakuMode(0=弹幕,1=列表抽屉);数据由本页按需拉取。 */
     danmakuEnabled: Boolean = true,
     danmakuMode: Int = 0,
     positionProvider: () -> Long = { state.positionMs },
+    /** 换源应用后回调:把新歌词写回 VM 的 LyricUiState(Repository 缓存已更新)。 */
+    onLyricReplaced: (List<dev.avsong.data.lyric.LyricLine>) -> Unit = {},
+    /** 换源候选列表/应用:LyricRepository 实例(AvSongApp 从 VM 取传入)。 */
+    lyricRepository: dev.avsong.data.lyric.LyricRepository? = null,
+    /** 热评点赞要 bili_jct;null/空 = 未登录,点赞钮提示去登录。 */
+    getCsrf: () -> String? = { null },
 ) {
     var position by remember(state.currentMediaId, state.isPlaying) { mutableLongStateOf(state.positionMs) }
     var showLyric by remember { mutableStateOf(false) }
+    // 歌词换源:候选弹窗开合与数据(点「换源」时才拉三源候选,拉一次缓存到关闭)
+    var showLyricPicker by remember { mutableStateOf(false) }
     // 热评数据:点热评键时按需拉一次(进页不自动拉不自动飘,用户要求)。
-    // 翻页:replies 累积追加,cursor 为响应回传的游标(null=到底/失败);失败置 replyError 供抽屉区分空态。
+    // 固定首页 20 条,不翻页(实测后续页混入大量 0 赞低质评论,「热评」语义不成立,用户拍板)。
     var hotReplies by remember { mutableStateOf<List<dev.avsong.data.ReplyRepository.HotReply>>(emptyList()) }
-    var repliesCursor by remember { mutableStateOf<Long?>(0L) } // 0=还没拉过首页,null=到底
+    var repliesLoaded by remember { mutableStateOf(false) }
     var repliesLoading by remember { mutableStateOf(false) }
     var replyError by remember { mutableStateOf<String?>(null) }
+    // 拉取时的 aid(评论点赞的 oid);点赞是登录态操作,csrf 由调用方注入
+    var repliesAid by remember { mutableStateOf(0L) }
     // 列表抽屉模式(mode=1)的开合
     var showReplySheet by remember { mutableStateOf(false) }
     // 弹幕模式(mode=0)的开合:点热评键开/再点关;两模式都是点击触发,不再自动显示
     var showDanmaku by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    // 拉一页(首页或后续);已在加载/已到底则忽略。失败保留已有列表(抽屉里看得到错误行)。
+    // 拉一次(20 条);失败置 replyError 供抽屉显示「点按重试」
     fun loadReplies() {
         val bvid = state.currentMediaId ?: return
-        if (repliesLoading || repliesCursor == null && hotReplies.isNotEmpty()) return
-        val cursor = repliesCursor ?: return
+        if (repliesLoading) return
         repliesLoading = true
         replyError = null
         scope.launch {
@@ -148,52 +169,91 @@ fun PlayerScreen(
                 artist = state.artist.orEmpty(),
                 coverUrl = state.artworkUri,
             )
-            val aid = if (song.aid > 0) song.aid
-            else runCatching { favoriteRepository.fetchAid(song.bvid) }.getOrDefault(0L)
             try {
-                val page = dev.avsong.data.ReplyRepository.hotReplies(aid, cursor.takeIf { it > 0 })
-                hotReplies = hotReplies + page.replies
-                repliesCursor = page.nextCursor
-                if (page.replies.isEmpty() && page.nextCursor == null && hotReplies.isEmpty()) {
-                    replyError = "暂无热评"
+                repliesAid = if (song.aid > 0) song.aid
+                else runCatching { favoriteRepository.fetchAid(song.bvid) }.getOrDefault(0L)
+                hotReplies = dev.avsong.data.ReplyRepository.hotRepliesFor(song) {
+                    favoriteRepository.fetchAid(it)
                 }
+                if (hotReplies.isEmpty()) replyError = "暂无热评"
             } catch (e: Exception) {
-                replyError = if (hotReplies.isEmpty()) "加载失败:${e.message}" else null
-                if (hotReplies.isEmpty()) repliesCursor = null // 首页失败:允许点重试(reset)
+                replyError = "加载失败:${e.message}"
             } finally {
+                repliesLoaded = true
                 repliesLoading = false
             }
         }
     }
 
-    // 首次加载入口(点热评键/开弹幕时):仅在完全没数据时发首页请求
-    fun ensureReplies() {
-        if (hotReplies.isEmpty() && repliesCursor != null && !repliesLoading) loadReplies()
+    /** 热评点赞/取消:乐观翻转本地态,请求失败回滚并经 replyError 提示。 */
+    fun toggleReplyLike(reply: dev.avsong.data.ReplyRepository.HotReply) {
+        val csrf = getCsrf()
+        if (csrf.isNullOrBlank()) {
+            replyError = "点赞需要先登录"
+            return
+        }
+        val liked = reply.action == 1
+        val idx = hotReplies.indexOfFirst { it.rpid == reply.rpid }
+        if (idx < 0) return
+        // 乐观更新
+        hotReplies = hotReplies.toMutableList().apply {
+            set(idx, reply.copy(action = if (liked) 0 else 1, likeCount = reply.likeCount + if (liked) -1 else 1))
+        }
+        scope.launch {
+            try {
+                dev.avsong.data.ReplyRepository.likeReply(repliesAid, reply.rpid, !liked, csrf)
+            } catch (e: Exception) {
+                // 回滚
+                hotReplies = hotReplies.toMutableList().apply {
+                    set(idx, reply)
+                }
+                replyError = "点赞失败:${e.message}"
+            }
+        }
     }
-    // 首页失败后的重试:恢复游标再走 loadReplies
+
+    // 首次加载入口(点热评键/开弹幕时):没拉过才发请求
+    fun ensureReplies() {
+        if (!repliesLoaded && !repliesLoading) loadReplies()
+    }
+    // 失败后的重试:清状态再走一次
     fun retryReplies() {
-        if (hotReplies.isEmpty()) repliesCursor = 0L
+        repliesLoaded = false
+        replyError = null
         loadReplies()
     }
 
     // 换曲清数据;若弹幕开着则自动重拉(用户开着的弹幕换曲不消失,后续曲也持续有弹幕)
     LaunchedEffect(state.currentMediaId) {
         hotReplies = emptyList()
-        repliesCursor = 0L
+        repliesLoaded = false
         repliesLoading = false
         replyError = null
         if (showDanmaku) loadReplies()
     }
-    // 收藏:爱心回显 + 弹窗开关(声明在函数级,信息卡爱心与弹窗共用)
-    var favChecked by remember(state.currentMediaId) { mutableStateOf(false) }
+    // 收藏:爱心回显 + 弹窗开关(声明在函数级,信息卡爱心与弹窗共用)。
+    // 爱心 = B 站收藏夹之一有它 **或** 在任一本地歌单(弹窗是双区,只看 B 站一半会漏)
+    var favCheckedBili by remember(state.currentMediaId) { mutableStateOf(false) }
+    // 已收藏进哪几个 B 站夹(id):亮爱心点击=一键取消收藏,从这里拿 delIds
+    var favFolderIds by remember(state.currentMediaId) { mutableStateOf<List<Long>>(emptyList()) }
+    var favAid by remember(state.currentMediaId) { mutableStateOf(0L) }
     var showFavPicker by remember { mutableStateOf(false) }
     LaunchedEffect(state.currentMediaId) {
         val bvid = state.currentMediaId ?: return@LaunchedEffect
         val aid = runCatching { favoriteRepository.fetchAid(bvid) }.getOrDefault(0L)
+        favAid = aid
         if (aid > 0) {
-            favChecked = runCatching { favoriteRepository.checkFavorite(aid).isNotEmpty() }
-                .getOrDefault(false)
+            val ids = runCatching { favoriteRepository.checkFavorite(aid) }.getOrDefault(emptyList())
+            favFolderIds = ids
+            favCheckedBili = ids.isNotEmpty()
         }
+    }
+    val localPlaylists = localPlaylistsState?.collectAsState()?.value ?: emptyList()
+    val favChecked = favCheckedBili || localPlaylists.any { pl -> pl.tracks.any { it.bvid == state.currentMediaId } }
+    // 一键取消收藏的 B 站侧结果校正:失败(B 站仍亮)时乐观置灭的爱心回滚
+    unfavResult?.let { (bvid, stillBili) ->
+        if (bvid == state.currentMediaId && stillBili) favCheckedBili = true
+        onConsumeUnfavResult()
     }
     // 浅色/夜间分支用:主题不带 isDark 标记,以 surface 亮度判定(两套方案的 surface 差异极大)
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
@@ -272,20 +332,34 @@ fun PlayerScreen(
             // 歌词态:歌词铺满上半区(坐在封面黑纱上,用白色系文字),信息卡整个隐藏,
             // 点歌词空白处切回封面(歌词行本身的点击仍是 seek);封面态:留白把信息卡推到底部。
             if (showLyric) {
-                LyricView(
-                    lyric = lyric,
-                    positionMs = position,
-                    onSeek = ::seekAndShow,
-                    onArtwork = state.artworkUri != null,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(top = 8.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) { showLyric = false },
-                )
+                Box(Modifier.fillMaxWidth().weight(1f)) {
+                    LyricView(
+                        lyric = lyric,
+                        positionMs = position,
+                        onSeek = ::seekAndShow,
+                        onArtwork = state.artworkUri != null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { showLyric = false },
+                    )
+                    // 换源入口:歌词态右上角小图标(比文字钮轻,不抢歌词;点开候选弹窗)
+                    Icon(
+                        Icons.Rounded.SwapHoriz,
+                        contentDescription = "换歌词源",
+                        tint = Color.White.copy(alpha = 0.45f),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 8.dp, end = 20.dp)
+                            .size(20.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { showLyricPicker = true },
+                    )
+                }
             } else {
             // 热评弹幕层:点热评键才显示(进页不自动飘)。占满整个上层区——封面态原本
             // Spacer 与弹幕层各 weight 一半,上部全空着(用户反馈),改为弹幕开着时不放 Spacer。
@@ -295,6 +369,7 @@ fun PlayerScreen(
             if (showDanmaku && hotReplies.isNotEmpty()) {
                 ReplyDanmaku(
                     replies = hotReplies,
+                    onLikeReply = ::toggleReplyLike,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
@@ -346,10 +421,30 @@ fun PlayerScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    // 收藏键从顶栏移入信息卡(顶栏浅色下在亮封面上看不清)。
-                    // 点击一律弹「收藏到」选择框(勾选=加入/取消勾=移出,收藏夹自选);
-                    // 弹窗「完成」回传勾选状态同步爱心(favChecked/showFavPicker 声明在函数级)
-                    IconButton(onClick = { showFavPicker = true }, modifier = Modifier.size(44.dp)) {
+                    // 收藏键(信息卡):**亮爱心点击=一键取消收藏**(B 站全夹+本地歌单全移出,
+                    // 用户实测「取消收藏还弹收藏界面不合逻辑」);灭=弹「收藏到」双区弹窗。
+                    // 长按 = 无论状态都弹管理弹窗(只想撤个别夹的人走这里)。
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .combinedClickable(
+                                // indication=null:默认方形涟漪在小控件上很难看(全局约定裸点无涟漪)
+                                indication = null,
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                onClick = {
+                                    if (favChecked) {
+                                        // 乐观更新:爱心先灭,失败由 unfavoriteEverywhere 的结果回写
+                                        favCheckedBili = false
+                                        favFolderIds = emptyList()
+                                        onUnfavoriteAll?.invoke()
+                                    } else {
+                                        showFavPicker = true
+                                    }
+                                },
+                                onLongClick = { showFavPicker = true },
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
                         Icon(
                             if (favChecked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                             contentDescription = if (favChecked) "已收藏,点按管理收藏夹" else "收藏到收藏夹",
@@ -541,18 +636,8 @@ fun PlayerScreen(
                         }
 
                         else -> {
-                            // LazyColumn 才能做「滚到底自动加载下一页」:普通 Column+verticalScroll
-                            // 没有可见项回调,翻页触发不了
-                            val listState = rememberLazyListState()
-                            LaunchedEffect(listState, hotReplies.size, repliesCursor) {
-                                snapshotFlow {
-                                    val info = listState.layoutInfo
-                                    val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
-                                    repliesCursor != null && !repliesLoading &&
-                                        info.totalItemsCount > 0 && last >= info.totalItemsCount - 4
-                                }.collect { nearEnd -> if (nearEnd) loadReplies() }
-                            }
-                            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
+                            // 固定 20 条(用户拍板不翻页):后续页混入大量 0 赞低质评论,「热评」语义不成立
+                            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                                 items(hotReplies) { r ->
                                     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)) {
                                         Text(
@@ -569,41 +654,135 @@ fun PlayerScreen(
                                         )
                                         Spacer(Modifier.height(2.dp))
                                         Row(verticalAlignment = Alignment.CenterVertically) {
+                                            // 点赞钮:已赞 primary 高亮;未登录点按提示去登录
                                             Icon(
                                                 Icons.Filled.ThumbUp,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(14.dp),
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                contentDescription = if (r.action == 1) "取消点赞" else "点赞",
+                                                modifier = Modifier
+                                                    .size(14.dp)
+                                                    .clickable(
+                                                        interactionSource = remember { MutableInteractionSource() },
+                                                        indication = null,
+                                                    ) { toggleReplyLike(r) },
+                                                tint = if (r.action == 1) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
                                             Spacer(Modifier.width(4.dp))
                                             Text(
                                                 "${r.likeCount}",
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                color = if (r.action == 1) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
                                         }
                                     }
                                 }
-                                // 尾部状态行:加载中转圈 / 到底提示 / 加载失败重试行
+                                // 尾部:固定 20 条到此为止(不翻页);失败才显示重试
                                 item {
                                     Box(
                                         Modifier.fillMaxWidth().padding(vertical = 14.dp),
                                         contentAlignment = Alignment.Center,
                                     ) {
-                                        when {
-                                            repliesLoading -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                                            replyError != null -> Text(
+                                        if (replyError != null) {
+                                            Text(
                                                 "${replyError} · 点按重试",
                                                 style = MaterialTheme.typography.labelMedium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 modifier = Modifier.clickable { retryReplies() },
                                             )
-                                            repliesCursor == null -> Text(
-                                                "— 没有更多了 —",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 歌词换源候选弹窗:列三源候选(网易云/lrclib/B站字幕),点选即应用并写缓存
+        if (showLyricPicker) {
+            val bvid = state.currentMediaId ?: ""
+            ModalBottomSheet(
+                onDismissRequest = { showLyricPicker = false },
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 0.dp,
+            ) {
+                var candidates by remember(bvid) {
+                    mutableStateOf<List<dev.avsong.data.lyric.LyricCandidate>?>(null)
+                }
+                var loadError by remember(bvid) { mutableStateOf<String?>(null) }
+                // 拉候选:进弹窗一次性收集三源(每源内部已限个数,总时长可控)
+                LaunchedEffect(bvid) {
+                    if (candidates == null && bvid.isNotBlank()) {
+                        try {
+                            candidates = lyricRepository!!.listCandidates(
+                                bvid = bvid,
+                                title = state.title.orEmpty(),
+                                artist = state.artist.orEmpty(),
+                                durationSec = state.durationMs / 1000,
+                            )
+                        } catch (e: Exception) {
+                            loadError = e.message ?: "加载失败"
+                        }
+                    }
+                }
+                Column(
+                    Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 28.dp),
+                ) {
+                    Text(
+                        "换歌词源",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
+                    )
+                    when {
+                        candidates == null && loadError == null -> Box(
+                            Modifier.fillMaxWidth().padding(vertical = 40.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp) }
+
+                        candidates?.isEmpty() == true || (loadError != null && candidates == null) -> Text(
+                            loadError ?: "没有找到其他歌词源",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 24.dp),
+                        )
+
+                        else -> Column {
+                            candidates!!.forEach { c ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            lyricRepository!!.applyCandidate(bvid, c)
+                                            onLyricReplaced(c.lines)
+                                            showLyricPicker = false
+                                        }
+                                        .padding(vertical = 10.dp, horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            "${c.source} · ${c.lines.size} 行",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                        Text(
+                                            c.displayTitle,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    if (c.durationDeltaSec != 0L) {
+                                        Text(
+                                            (if (c.durationDeltaSec > 0) "+" else "") + "${c.durationDeltaSec}s",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
                                     }
                                 }
                             }
@@ -624,7 +803,7 @@ fun PlayerScreen(
                 FavoritePickerDialog(
                     favRepo = favoriteRepository,
                     bvid = bvid,
-                    onDismissWithState = { favChecked = it },
+                    onDismissWithState = { favCheckedBili = it }, // 回传的是 B 站夹勾选;本地歌单半区由 StateFlow 派生
                     onResult = { favNotice = it },
                     localPlaylists = localPlaylists,
                     onToggleLocal = onToggleLocal?.let { toggle ->

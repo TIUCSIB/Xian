@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+ 系统启动页:底色对齐屋顶场景的天空深紫;图标置空(透明),
+         系统页只剩纯色一瞬,紧接 app 内屋顶图过渡层,视觉上只有一次启动 -->
+    <style name="Theme.AvSong.Splash" parent="Theme.AvSong">
+        <item name="android:windowSplashScreenBackground">#111346</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_transparent_icon</item>
+        <item name="android:windowBackground">@drawable/splash_bg</item>
+    </style>
+</resources>

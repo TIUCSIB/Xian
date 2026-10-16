@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动图主题:窗口背景垫屋顶场景(nodpi 原图,系统按窗口裁剪);
+         首帧 Compose 渲染后进入正常主题,无白屏跳变 -->
+    <style name="Theme.AvSong.Splash" parent="Theme.AvSong">
+        <item name="android:windowBackground">@drawable/splash_bg</item>
+        <item name="android:windowFullscreen">false</item>
+    </style>
+</resources>

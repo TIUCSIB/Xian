@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
@@ -70,6 +71,8 @@ import kotlin.random.Random
 fun ReplyDanmaku(
     replies: List<ReplyRepository.HotReply>,
     modifier: Modifier = Modifier,
+    /** 详情弹窗内点赞(翻转 action/likeCount 由调用方在数据层做);null=不显示点赞钮。 */
+    onLikeReply: ((ReplyRepository.HotReply) -> Unit)? = null,
 ) {
     if (replies.isEmpty()) return
     // 点中的弹幕(非空时弹详情 Modal 看全文);状态提在根级,chip 与弹窗解耦
@@ -99,6 +102,8 @@ fun ReplyDanmaku(
     }
 
     // 弹幕详情:点弹幕看全文(用户要求);Dialog 居中卡片,点遮罩/返回关闭
+    // selectedReply 每次 recompose 从 replies 里找最新版(点赞翻转后赞数/高亮同步)
+    selectedReply = selectedReply?.let { sel -> replies.firstOrNull { it.rpid == sel.rpid } ?: sel }
     selectedReply?.let { reply ->
         Dialog(onDismissRequest = { selectedReply = null }) {
             Column(
@@ -117,18 +122,32 @@ fun ReplyDanmaku(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Icon(
-                        Icons.Filled.ThumbUp,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        "${reply.likeCount}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    // 右上角赞数 = 点赞入口(与热评抽屉行内赞钮同款操作):
+                    // 点按翻转赞态,已赞 primary 高亮;onLikeReply=null 时退化为纯展示
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = if (onLikeReply != null) {
+                            Modifier
+                                .clip(RoundedCornerShape(50))
+                                .clickable { onLikeReply(reply) }
+                                .padding(horizontal = 6.dp, vertical = 4.dp)
+                        } else Modifier,
+                    ) {
+                        Icon(
+                            Icons.Filled.ThumbUp,
+                            contentDescription = if (reply.action == 1) "取消点赞" else "点赞",
+                            modifier = Modifier.size(14.dp),
+                            tint = if (reply.action == 1) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            "${reply.likeCount}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (reply.action == 1) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 Spacer(Modifier.height(10.dp))
                 // 长评限高滚动:歌词全文这类超长热评会把弹窗撑出屏幕(用户实测),

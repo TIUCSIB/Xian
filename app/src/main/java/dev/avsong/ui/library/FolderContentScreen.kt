@@ -34,6 +34,11 @@ fun FolderContentScreen(
     onDownload: (Song) -> Unit,
     /** ⋮ 菜单「下载全部」：把已加载的歌曲整批入队(队列自动去重已下载/已在队的)。 */
     onDownloadAll: (List<Song>) -> Unit,
+    /** 多选批量「下一首播放」/「加入队列」(保持选中顺序)。 */
+    onPlayNextBatch: (List<Song>) -> Unit,
+    onAddToQueueBatch: (List<Song>) -> Unit,
+    /** 多选批量收藏:弹窗选定夹组合后执行(经 MainViewModel.favoriteSongs)。 */
+    onFavoriteBatch: (List<Song>, List<Long>) -> Unit,
     currentMediaId: String?,
     isPlaying: Boolean,
 ) {
@@ -41,11 +46,12 @@ fun FolderContentScreen(
     val state by vm.state.collectAsState()
     val loadingAll by vm.loadingAll.collectAsState()
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showBatchFav by remember { mutableStateOf<List<Song>?>(null) }
 
     PlaylistDetailContent(
         title = folderTitle,
         metaLine = "收藏夹 · ${state.songs.size} 首",
-        subtitle = "",
+        subtitle = state.intro,
         cover = state.songs.firstOrNull()?.coverUrl,
         songs = state.songs,
         loading = state.loading,
@@ -57,6 +63,7 @@ fun FolderContentScreen(
         onBack = onBack,
         // 头部「播放」= 整队替换(与合集详情同款,2026-10-15 用户反馈);点行仍=插播不换队
         onPlayAll = { _ -> vm.playWithFill(0, { songs, _ -> onPlayQueue(songs) }, replace = true) },
+        onDownloadAllParam = onDownloadAll,
         // 播放前先拉全量:否则大收藏夹点播放只入列已加载的第一页(20 首);与合集详情同款
         onPlay = { _, index ->
             // 补全进行中的点击不被护栏吞掉(与合集详情同坑):直播所点那一首
@@ -80,6 +87,14 @@ fun FolderContentScreen(
         loadingAll = loadingAll,
         loadingHint = if (loadingAll) "已加载 ${state.songs.size} 首,补全中…" else null,
         onLoadAll = vm::loadAll,
+        batchActions = dev.avsong.ui.library.BatchActions(
+            onDownload = onDownloadAll,
+            onFavorite = { songs -> showBatchFav = songs },
+            onPlayNext = onPlayNextBatch,
+            onAddToQueue = onAddToQueueBatch,
+            onRemove = { songs -> songs.forEach { vm.removeFromFolder(it) } },
+            removeLabel = "从收藏夹移除",
+        ),
         menuActions = listOf(
             "下载全部(已加载 " + state.songs.size.toString() + " 首)" to { onDownloadAll(state.songs) },
             "删除收藏夹" to { showDeleteConfirm = true },
@@ -111,6 +126,16 @@ fun FolderContentScreen(
             title = { Text("操作失败") },
             text = { Text(err) },
             confirmButton = { TextButton(onClick = vm::clearActionError) { Text("知道了") } },
+        )
+    }
+
+    // 多选批量收藏:复用队列多选同款夹选择弹窗(勾夹 → 逐首 modify)
+    showBatchFav?.let { songs ->
+        BatchFavoriteDialog(
+            favRepo = vm.favRepo,
+            songCount = songs.size,
+            onConfirm = { folderIds -> onFavoriteBatch(songs, folderIds) },
+            onDismiss = { showBatchFav = null },
         )
     }
 }

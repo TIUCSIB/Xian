@@ -33,6 +33,13 @@ fun LocalPlaylistContentScreen(
     onAddToQueue: (Song) -> Unit,
     onFavorite: (Song) -> Unit,
     onDownload: (Song) -> Unit,
+    /** 多选批量「下一首播放」/「加入队列」(保持选中顺序)。 */
+    onPlayNextBatch: (List<Song>) -> Unit,
+    onAddToQueueBatch: (List<Song>) -> Unit,
+    /** 多选批量收藏:弹窗选定夹组合后执行(经 MainViewModel.favoriteSongs)。 */
+    onFavoriteBatch: (List<Song>, List<Long>) -> Unit,
+    /** 批量下载(多选与将来可能的「下载全部」共用;经 MainViewModel.downloadAll)。 */
+    onDownloadAll: (List<Song>) -> Unit,
     currentMediaId: String?,
     isPlaying: Boolean,
 ) {
@@ -40,6 +47,7 @@ fun LocalPlaylistContentScreen(
     val playlist = playlists.firstOrNull { it.id == playlistId }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
+    var showBatchFav by remember { mutableStateOf<List<Song>?>(null) }
 
     // 歌单刚被删除时 playlist 为 null:直接退回歌单页(列表刷新已由 StateFlow 驱动)
     if (playlist == null) {
@@ -64,6 +72,7 @@ fun LocalPlaylistContentScreen(
         onLoadMore = {},
         onBack = onBack,
         onPlayAll = { songs -> onPlayQueue(songs) },
+        onDownloadAllParam = onDownloadAll,
         onPlay = onPlay,
         onShuffle = onShuffle,
         currentMediaId = currentMediaId,
@@ -74,6 +83,14 @@ fun LocalPlaylistContentScreen(
         onDownload = onDownload,
         onRemoveSong = { viewModel.removeSongFromLocalPlaylist(playlistId, it.bvid) },
         removeSongLabel = "从歌单移除",
+        batchActions = dev.avsong.ui.library.BatchActions(
+            onDownload = onDownloadAll,
+            onFavorite = { songs -> showBatchFav = songs },
+            onPlayNext = onPlayNextBatch,
+            onAddToQueue = onAddToQueueBatch,
+            onRemove = { songs -> songs.forEach { viewModel.removeSongFromLocalPlaylist(playlistId, it.bvid) } },
+            removeLabel = "从歌单移除",
+        ),
         menuActions = listOf(
             "重命名歌单" to { showRename = true },
             "删除歌单" to { showDeleteConfirm = true },
@@ -106,6 +123,15 @@ fun LocalPlaylistContentScreen(
                 viewModel.renameLocalPlaylist(playlistId, name)
                 showRename = false
             },
+        )
+    }
+
+    showBatchFav?.let { songs ->
+        BatchFavoriteDialog(
+            favRepo = viewModel.favoriteRepository,
+            songCount = songs.size,
+            onConfirm = { folderIds -> onFavoriteBatch(songs, folderIds) },
+            onDismiss = { showBatchFav = null },
         )
     }
 }
