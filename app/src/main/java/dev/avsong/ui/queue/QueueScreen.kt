@@ -83,7 +83,6 @@ fun QueueContent(
         ) {
             itemsIndexed(queue) { index, entry ->
                 QueueRow(
-                    index = index,
                     entry = entry,
                     isCurrent = index == currentIndex,
                     isPlaying = isPlaying,
@@ -104,7 +103,6 @@ fun QueueContent(
 
 @Composable
 private fun QueueRow(
-    index: Int,
     entry: QueueEntry,
     isCurrent: Boolean,
     isPlaying: Boolean,
@@ -135,12 +133,12 @@ private fun QueueRow(
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier.width(22.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (selectionMode) {
-                // 勾选圈:勾中实心 primary + 白勾,未勾描边圈
+        // 多选模式:行首勾选圈(所有行都有,横向对齐一致,不会错位)
+        if (selectionMode) {
+            Box(
+                modifier = Modifier.width(22.dp),
+                contentAlignment = Alignment.Center,
+            ) {
                 Box(
                     modifier = Modifier
                         .size(20.dp)
@@ -166,40 +164,52 @@ private fun QueueRow(
                         )
                     }
                 }
-            } else when {
-                // 播放中:行首换成音波条动画;当前曲但暂停时保留播放三角(点行=续播)
-                isCurrent && isPlaying ->
-                    PlayingEqualizer(modifier = Modifier.size(width = 16.dp, height = 12.dp))
-                isCurrent -> Icon(
-                    Icons.Rounded.PlayArrow,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-                else -> Text(
-                    "${index + 1}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
+            Spacer(Modifier.width(8.dp))
         }
-        Spacer(Modifier.width(8.dp))
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (entry.artworkUri != null) {
-                AsyncImage(entry.artworkUri, null, Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)))
-            } else {
-                Icon(
-                    Icons.Rounded.MusicNote,
-                    null,
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+        // 封面:当前曲把播放态叠在封面上(与首页列表同款),不再单占行首一列——
+        // 单列会让当前曲的封面/标题整体右移,与其它行错位(用户反馈不协调)
+        Box {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (entry.artworkUri != null) {
+                    AsyncImage(entry.artworkUri, null, Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)))
+                } else {
+                    Icon(
+                        Icons.Rounded.MusicNote,
+                        null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            if (isCurrent) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.Black.copy(alpha = 0.45f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isPlaying) {
+                        PlayingEqualizer(
+                            modifier = Modifier.size(width = 18.dp, height = 14.dp),
+                            onArtwork = true,
+                        )
+                    } else {
+                        Icon(
+                            Icons.Rounded.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = Color.White,
+                        )
+                    }
+                }
             }
         }
         Spacer(Modifier.width(12.dp))

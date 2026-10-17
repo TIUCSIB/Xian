@@ -27,7 +27,8 @@ import dev.avsong.ui.common.StateHint
  * 全部播放历史页(「我的」页设置卡存储组入口):
  * 与队列抽屉「历史播放」tab 同一数据源(PlayHistoryStore,上限在设置可调),
  * 但整页可滚动、行数不受抽屉高度限制。
- * 点行回放策略 = playFromHistory(在队列跳播/队列空单曲入列/否则追加队尾),不打乱现有队列。
+ * 点行回放策略 = playFromHistory(在队列跳播/队列空单曲入列/否则追加队尾),不打乱现有队列;
+ * **点当前曲 = 暂停/续播**(不再 seekTo(0) 从头重播,与已下载页同一交互)。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,6 +38,7 @@ fun PlayHistoryScreen(
     isPlaying: Boolean,
     onBack: () -> Unit,
     onPlayFromHistory: (Song) -> Unit,
+    onPlayPause: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -67,7 +69,11 @@ fun PlayHistoryScreen(
             } else {
                 SongList(
                     songs = history,
-                    onPlay = { _, index -> onPlayFromHistory(history[index]) },
+                    onPlay = { songs, index ->
+                        // 点当前曲 = 暂停/续播:playFromHistory 会 seekTo(0) 重播,不该用于当前曲
+                        if (songs.getOrNull(index)?.mediaId == currentMediaId) onPlayPause()
+                        else onPlayFromHistory(songs[index])
+                    },
                     showPlayButton = false,
                     currentMediaId = currentMediaId,
                     isPlaying = isPlaying,

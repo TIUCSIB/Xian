@@ -373,9 +373,10 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                             queue = state.player.queue,
                             currentIndex = state.player.currentIndex,
                             onPlayAt = { index ->
-                                // 点其他歌:直接切过去播;点当前曲:什么都不做。
+                                // 点其他歌:直接切过去播;点当前曲:暂停/续播(不再静默无反应)。
                                 // 抽屉保持打开,由用户手动下滑关闭(用户要求)
-                                if (index != state.player.currentIndex) viewModel.playAt(index)
+                                if (index == state.player.currentIndex) viewModel.playPause()
+                                else viewModel.playAt(index)
                             },
                             onRemoveAt = viewModel::removeFromQueue,
                             onMove = viewModel::moveInQueue,
@@ -422,7 +423,14 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         val historySnapshot = remember { playHistory }
                         SongList(
                             songs = historySnapshot,
-                            onPlay = { songs, index -> viewModel.playFromHistory(songs[index]) },
+                            onPlay = { songs, index ->
+                                // 点当前曲 = 暂停/续播(playFromHistory 会 seekTo(0) 重播,不该用于当前曲)
+                                if (songs.getOrNull(index)?.mediaId == state.player.currentMediaId) {
+                                    viewModel.playPause()
+                                } else {
+                                    viewModel.playFromHistory(songs[index])
+                                }
+                            },
                             showPlayButton = false,
                             currentMediaId = state.player.currentMediaId,
                             isPlaying = state.player.isPlaying,
@@ -621,6 +629,7 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         isPlaying = state.player.isPlaying,
                         onBack = { navController.popBackStack() },
                         onPlayFromHistory = viewModel::playFromHistory,
+                        onPlayPause = viewModel::playPause,
                     )
                 }
                 composable(Routes.ABOUT) {

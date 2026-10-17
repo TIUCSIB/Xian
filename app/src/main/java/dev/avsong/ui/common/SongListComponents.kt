@@ -66,7 +66,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import dev.avsong.domain.Song
 import dev.avsong.domain.formatClock
@@ -98,9 +97,6 @@ fun SectionHeader(title: String, subtitle: String) {
 fun SongList(
     songs: List<Song>,
     onPlay: (List<Song>, Int) -> Unit,
-    showRank: Boolean = false,
-    /** 名次偏移:列表是整榜截掉前 N 首(进精选轮播)时,行首名次要接着 N 往下数。 */
-    rankOffset: Int = 0,
     showPlayButton: Boolean = true,
     /** 当前播放曲的 mediaId:命中行的歌名高亮 + 播放中封面盖音波条徽章。 */
     currentMediaId: String? = null,
@@ -138,7 +134,6 @@ fun SongList(
         itemsIndexed(songs, key = { _, s -> s.mediaId }) { index, song ->
             SongRow(
                 song = song,
-                rank = if (showRank) index + 1 + rankOffset else null,
                 showPlayButton = showPlayButton,
                 isCurrent = song.mediaId == currentMediaId,
                 isPlaying = isPlaying,
@@ -178,7 +173,6 @@ fun SongList(
 @Composable
 fun SongRow(
     song: Song,
-    rank: Int?,
     onClick: () -> Unit,
     showPlayButton: Boolean = true,
     isCurrent: Boolean = false,
@@ -207,18 +201,6 @@ fun SongRow(
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (rank != null) {
-            Text(
-                text = "$rank",
-                modifier = Modifier.width(28.dp),
-                textAlign = TextAlign.Center,
-                fontSize = 16.sp,
-                fontWeight = if (rank <= 3) FontWeight.Black else FontWeight.Medium,
-                color = if (rank <= 3) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
         // 当前播放曲:整封面暗色遮罩(跟随封面圆角)+ 居中音波条,歌名高亮。
         // 遮罩深浅统一 0.45(2026-10-14 用户要求):音波条已改白色,浅色主题下也得靠深遮罩衬托;
         // 旧的「浅色减档到 12%」是给主题色音波条留的,现在不需要了(标题在遮罩外,不受影响)
@@ -240,7 +222,7 @@ fun SongRow(
             }
         }
 
-        Spacer(Modifier.width(if (rank != null) 12.dp else 14.dp))
+        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
             Text(
                 song.title,
@@ -273,23 +255,19 @@ fun SongRow(
                 modifier = Modifier.padding(start = 6.dp, end = 6.dp),
             )
         }
-        // 播放圆钮可关(首页列表行尾只留时长);前三黄色,其余深灰(纯色,无阴影)
+        // 播放圆钮可关(首页列表行尾只留时长);纯色深灰,无阴影
         if (showPlayButton) {
             Box(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(CircleShape)
-                    .background(
-                        if (rank != null && rank <= 3) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                    ),
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     Icons.Filled.PlayArrow,
                     contentDescription = "播放",
-                    tint = if (rank != null && rank <= 3) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurface,
+                    tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(22.dp),
                 )
             }

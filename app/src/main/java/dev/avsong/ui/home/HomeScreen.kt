@@ -70,7 +70,7 @@ import dev.avsong.ui.common.SkeletonList
 import dev.avsong.ui.common.SongList
 import dev.avsong.ui.common.StateHint
 
-/** 精选轮播取榜单前 N 首,下方列表从第 N+1 首起(名次经 rankOffset 接着数)。 */
+/** 精选轮播取榜单前 N 首,下方列表从第 N+1 首起(2026-10-17 起列表不再显示名次)。 */
 private const val FEATURED_COUNT = 3
 
 /** 自动轮播间隔:每页停留 8s;用户拖动/触摸期间暂停。 */
@@ -160,8 +160,7 @@ fun HomeScreen(
                         onAddToQueue = onAddToQueue,
                         onFavorite = onFavorite,
                         onDownload = onDownload,
-                        showRank = true,
-                        rankOffset = FEATURED_COUNT,
+                        // 2026-10-17 用户要求:首页列表去名次序号(行首只留封面)
                         showPlayButton = false,
                         currentMediaId = state.player.currentMediaId,
                         isPlaying = state.player.isPlaying,

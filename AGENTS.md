@@ -104,6 +104,7 @@ app/src/main/java/dev/avsong/
 
 ## 代码约定
 
+- **提交/推送/发版只在用户明确说的时候做**(2026-10-17 用户定规:功能没修完时别急着 push/release)。默认节奏=改代码 + `assembleDebug` 装机验证,改完汇报,等指令。
 - 无 DI 框架:Application 持单例,ViewModel 经 `ViewModelProvider.Factory` 注入;新增仓库实现改 `AvSongApp` 一处即可。
 - 序列化统一 kotlinx.serialization + `ignoreUnknownKeys`(B 站响应字段多且常变)。
 - UI 状态:`StateFlow<MainUiState>` 单状态树;播放器状态经 `PlayerController.playerState()` 流合并。
@@ -143,6 +144,8 @@ app/src/main/java/dev/avsong/
 
 - 点歌行为:**列表点行 = `playNow`(插当前曲后一位立即播,已在队列跳播,不换队列)**;「播放全部/随机播放」= 整队替换。两种意图各有入口,别混。
 - 播放队列唯一入口 = 迷你条/播放页的队列抽屉(ModalBottomSheet,双 tab「当前播放/历史播放」),无独立队列页。历史播放 = 本地 `PlayHistoryStore`,**不用 B 站 history 接口**(那是观看历史,app 播放不上报)。
+- **点当前曲 = 暂停/续播**(2026-10-17):队列抽屉两个 tab + 独立播放历史页统一走 `playPause()`。⚠ `playFromHistory` 会 `seekTo(idx, 0)` 从头重播,绝不能用于当前曲(用户报的「点历史里的当前曲又重播」根因)。判断用 `songs[index].mediaId == currentMediaId`。
+- **列表行不显示序号**(2026-10-17 用户要求):首页榜单、队列抽屉、歌单详情一律去掉 01/02 序号。当前曲的播放态**叠在封面上**(黑纱 0.45 + 白音波条/白三角),**不要单占行首一列**——单列会让当前曲整行右移、与其它行错位(用户点名不协调)。`SongList`/`SongRow` 的 `rank` 参数已整条删除。
 - 队列补全(`playWithFill`):已加载页立即播,剩余页后台逐批 `appendSongsToQueue`。⚠ 三重护栏缺一不可:查真 `_loadingAll` flow(有 UiState 同名字段永远 false,勿用)、`PlayerController.session` 代次(playQueue/clearQueue 自增,代次变了补全立即中止)、append 按 mediaId 去重(幂等)。978 首合集曾并发涨到 1716 首的教训。
 - **补全进行中的点击不能被护栏静默吞掉**:详情页 onPlay 三分流——搜索过滤子集(引用不等)→ 整队播;`loadingAll` 进行中 → 单首 playNow;否则 playWithFill。onShuffle 同理(进行中 = 已加载部分 shuffled 整队替换)。
 - 歌单详情头部「播放」= 整队替换(`playWithFill(replace=true)`);**点行仍是插播不换队**(用户定的交互)。
@@ -183,7 +186,7 @@ app/src/main/java/dev/avsong/
 - 详情页(收藏夹/合集/本地)共用 `ui/library/PlaylistDetailContent.kt`:沉浸头部(blur 封面垫底;收藏夹封面接口不回,用第一首 coverUrl 兜底)+ 播放/随机双胶囊 + 行尾 ⋯ 菜单(下一首播放/加入队列/下载/收藏/移出)+ 长按同款菜单 + 歌单内搜索 + 定位钮 + 补全进度行。本地歌单薄包装(loading/hasMore 恒 false),专属「从歌单移除」经 `removeSongLabel` 参数;合集条目无 owner,UP 名为空时副标题不渲染。
 - 歌单内搜索:进入搜索态即 `loadAll()` 拉全量(978 首大合集必须全量才搜得到);点过滤子集播过滤子集——**用引用相等(`playing === state.songs`)区分普通列表与过滤列表,别按下标**(实测点第 3 首播出全量第 3 首的坑)。
 - 定位钮:目标未加载时先逐次 loadMore 再滚(LazyColumn 只有可见项,长列表里未加载的行定位不到)。
-- 曲目行当前曲:**播放中**显示音波条,**暂停中回退为播放三角**——只判 isCurrent 不看 isPlaying 会装成在播(踩过)。
+- 曲目行当前曲:**播放中**显示音波条,**暂停中回退为播放三角**——只判 isCurrent 不看 isPlaying 会装成在播(踩过)。位置一律**叠在封面上**(见「播放与队列」去序号条)。
 
 ### 本地歌单与下载
 
