@@ -323,6 +323,7 @@ fun PlaylistDetailContent(
                             SelectableSongRow(
                                 song = song,
                                 isCurrent = song.mediaId == currentMediaId,
+                                isPlaying = isPlaying,
                                 isSelected = song.bvid in selected.value,
                                 onToggle = {
                                     selected.value =
@@ -332,7 +333,6 @@ fun PlaylistDetailContent(
                             )
                         } else {
                             NumberedSongRow(
-                                number = index + 1,
                                 song = song,
                                 isCurrent = song.mediaId == currentMediaId,
                                 isPlaying = isPlaying,
@@ -586,7 +586,6 @@ private fun DetailHeader(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NumberedSongRow(
-    number: Int,
     song: Song,
     isCurrent: Boolean,
     isPlaying: Boolean,
@@ -614,21 +613,54 @@ private fun NumberedSongRow(
             .padding(start = 12.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 序号位(2026-10-16 用户要求去序号):非当前曲留空(保留 30dp 槽位让标题对齐),
-        // 当前曲显示音波条/播放三角
-        Box(Modifier.width(30.dp), contentAlignment = Alignment.Center) {
-            when {
-                isCurrent && isPlaying ->
-                    PlayingEqualizer(Modifier.size(width = 18.dp, height = 14.dp))
-                isCurrent -> Icon(
-                    Icons.Rounded.PlayArrow,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.primary,
+        // 行首封面缩略图:44dp 圆角,无封面时音符占位;
+        // 当前曲封面叠黑纱(0.45,与共享 SongRow/首页精选卡同款)+ 白音波条(播放中)/白三角(暂停)
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (song.coverUrl != null) {
+                AsyncImage(
+                    song.coverUrl,
+                    null,
+                    Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Icon(
+                    Icons.Rounded.MusicNote,
+                    null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
                 )
             }
+            if (isCurrent) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(Color.Black.copy(alpha = 0.45f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isPlaying) {
+                        PlayingEqualizer(
+                            Modifier.size(width = 18.dp, height = 14.dp),
+                            onArtwork = true,
+                        )
+                    } else {
+                        Icon(
+                            Icons.Rounded.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            }
         }
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 song.title,
@@ -814,7 +846,6 @@ private fun SearchResults(
             ) {
                 itemsIndexed(filtered, key = { _, s -> s.bvid }) { index, song ->
                     NumberedSongRow(
-                        number = index + 1,
                         song = song,
                         isCurrent = song.mediaId == currentMediaId,
                         isPlaying = isPlaying,
@@ -855,6 +886,7 @@ data class BatchActions(
 private fun SelectableSongRow(
     song: Song,
     isCurrent: Boolean,
+    isPlaying: Boolean,
     isSelected: Boolean,
     onToggle: () -> Unit,
 ) {
@@ -885,6 +917,54 @@ private fun SelectableSongRow(
                     tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(16.dp),
                 )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        // 行首封面缩略图:44dp 圆角,无封面时音符占位;
+        // 当前曲封面叠黑纱(0.45,与共享 SongRow/首页精选卡同款)+ 白音波条(播放中)/白三角(暂停)
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (song.coverUrl != null) {
+                AsyncImage(
+                    song.coverUrl,
+                    null,
+                    Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Icon(
+                    Icons.Rounded.MusicNote,
+                    null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            if (isCurrent) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(Color.Black.copy(alpha = 0.45f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isPlaying) {
+                        PlayingEqualizer(
+                            Modifier.size(width = 18.dp, height = 14.dp),
+                            onArtwork = true,
+                        )
+                    } else {
+                        Icon(
+                            Icons.Rounded.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
             }
         }
         Spacer(Modifier.width(12.dp))
