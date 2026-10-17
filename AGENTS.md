@@ -104,6 +104,7 @@ app/src/main/java/dev/avsong/
 
 ## 代码约定
 
+- **应用内自更新必须按版本号认包**(2026-10-17 踩过):下载落地文件名要带版本(`update-<ver>.apk`),`install()` 只装目标版本;固定名 `update.apk` 会让上次残留的旧包被当成本次的包,装完系统报「已安装相同版本」。下载态 `done` 是进程内单例残留,复用它直接 install 同样会装错版本——装完必须复位 `idle`。
 - **提交/推送/发版只在用户明确说的时候做**(2026-10-17 用户定规:功能没修完时别急着 push/release)。默认节奏=改代码 + `assembleDebug` 装机验证,改完汇报,等指令。
 - 无 DI 框架:Application 持单例,ViewModel 经 `ViewModelProvider.Factory` 注入;新增仓库实现改 `AvSongApp` 一处即可。
 - 序列化统一 kotlinx.serialization + `ignoreUnknownKeys`(B 站响应字段多且常变)。

@@ -89,16 +89,19 @@ fun AboutScreen(onBack: () -> Unit) {
     /** 有新版时点「新版本」:开始下载(进度由 dl 流回显);done 自动拉起安装器。 */
     fun startUpdate() {
         val url = latestApkUrl ?: return
+        val ver = latestVersion ?: return
         when (dl.status) {
             "running" -> return
-            "done" -> AppUpdater.install(context)
-            else -> AppUpdater.downloadApk(context, url)
+            // done 只在包确实是这个版本时才直接装;对不上(残留旧包)就重下
+            "done" -> if (!AppUpdater.install(context, ver)) AppUpdater.downloadApk(context, url, ver)
+            else -> AppUpdater.downloadApk(context, url, ver)
         }
     }
 
-    // 下载完成自动拉安装器(用户点一下就走完全程);失败提示就地回显
+    // 下载完成自动拉安装器(用户点一下就走完全程);失败提示就地回显。
+    // 必须带版本号:残留的 done 状态属于上一次下载,不能拿来装这一次的版本
     LaunchedEffect(dl.status) {
-        if (dl.status == "done") AppUpdater.install(context)
+        if (dl.status == "done") latestVersion?.let { AppUpdater.install(context, it) }
     }
 
     Column(

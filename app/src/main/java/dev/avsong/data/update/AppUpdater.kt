@@ -37,6 +37,13 @@ object AppUpdater {
 
     private var downloading = false
 
+    /** 清掉目录里所有旧包(版本号对不上就重下,不能装错版本)。 */
+    private fun purgeStale(dir: File, keepVersion: String?) {
+        dir.listFiles()?.forEach { f ->
+            if (f.name.endsWith(".apk") && f.name != "update-$keepVersion.apk") f.delete()
+        }
+    }
+
     /** 查最新版;返回 null = 查不到(网络/限流)。 */
     suspend fun checkLatest(): Latest? = withContext(Dispatchers.IO) {
         runCatching {
@@ -56,10 +63,13 @@ object AppUpdater {
     }
 
     /**
-     * 下载最新 APK 到 files/update/(覆盖旧文件)。成功后状态转 done,等 UI 调 [install]。
+     * 下载指定版本的 APK 到 files/update/。成功后状态转 done,等 UI 调 [install]。
      * 已在下载中则忽略重复触发(检查更新行被连点)。
+     *
+     * ⚠ 文件名必须带版本号:`update.apk` 固定名会让上一次下载的旧包被当成本次的包,
+     * 装完系统报「已安装相同版本」(实测踩过)。旧版本的包在下载前一并清掉。
      */
-    fun downloadApk(context: Context, url: String) {
+    fun downloadApk(context: Context, url: String, version: String) {
         if (downloading) return
         downloading = true
         _download.value = DownloadState("running", 0)
@@ -67,7 +77,9 @@ object AppUpdater {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val dir = File(ctx.filesDir, "update").apply { mkdirs() }
-                val file = File(dir, "update.apk")
+                // 只保留本次要装的版本,其余旧包删除
+                purgeStale(dir, keepVersion = version)
+                val file = File(dir, "update-$version.apk")
                 val conn = URL(url).openConnection() as HttpURLConnection
                 conn.connectTimeout = 10_000
                 conn.readTimeout = 30_000
@@ -104,15 +116,27 @@ object AppUpdater {
         }
     }
 
-    /** 拉起系统安装器(files/update/update.apk 经 FileProvider 授权)。 */
-    fun install(context: Context) {
-        val file = File(context.filesDir, "update/update.apk")
-        if (!file.exists()) return
+    /**
+     * 拉起系统安装器。只装 [version] 对应的包——版本对不上就不装(返回 false),
+     * 否则会装成磁盘上残留的旧版本,系统提示「已安装相同版本」。
+     */
+    fun install(context: Context, version: String): Boolean {
+        val dir = File(context.filesDir, "update")
+        val file = File(dir, "update-$version.apk")
+        if (!file.exists()) {
+            // 缓存里是别的版本:清掉并让调用方重新下载
+            purgeStale(dir, keepVersion = null)
+            _download.value = DownloadState("idle")
+            return false
+        }
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
+        // 安装器已拉起,状态复位:否则下次检查更新会直接复用这次的 done 状态
+        _download.value = DownloadState("idle")
+        return true
     }
 }
