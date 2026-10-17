@@ -287,7 +287,8 @@ fun PlaylistDetailContent(
                     contentPadding = PaddingValues(bottom = if (selecting) 200.dp else 120.dp),
                 ) {
 
-                    item(key = "header") {
+                    stickyHeader(key = "header") {
+                        Box(Modifier.background(MaterialTheme.colorScheme.background)) {
                         DetailHeader(
                             cover = cover,
                             metaLine = metaLine,
@@ -305,6 +306,7 @@ fun PlaylistDetailContent(
                             },
                             selectActive = selecting,
                         )
+                        }
                     }
                     if (loadingHint != null) {
                         item(key = "loading-hint") {
@@ -612,9 +614,10 @@ private fun NumberedSongRow(
             .padding(start = 12.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // 序号位(2026-10-16 用户要求去序号):非当前曲留空(保留 30dp 槽位让标题对齐),
+        // 当前曲显示音波条/播放三角
         Box(Modifier.width(30.dp), contentAlignment = Alignment.Center) {
             when {
-                // 播放中才走音波动画;当前曲但暂停时显示播放三角(与队列抽屉同款,别让暂停装作在播)
                 isCurrent && isPlaying ->
                     PlayingEqualizer(Modifier.size(width = 18.dp, height = 14.dp))
                 isCurrent -> Icon(
@@ -622,11 +625,6 @@ private fun NumberedSongRow(
                     contentDescription = null,
                     modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.primary,
-                )
-                else -> Text(
-                    if (number < 100) "%02d".format(number) else number.toString(),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
