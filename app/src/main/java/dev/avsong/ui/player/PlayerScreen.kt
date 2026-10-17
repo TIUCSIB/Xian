@@ -52,6 +52,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -77,6 +79,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -293,19 +296,57 @@ fun PlayerScreen(
                 onClick = {},
             ),
     ) {
+        // 下一首封面预热:切歌前就把它拉进 Coil 内存/磁盘缓存,切过去时直接命中。
+        // ⚠ 目标取自 PlayerState.nextArtworkUri(ExoPlayer 的 nextMediaItemIndex),
+        // 它已算过 shuffle/repeat —— 随机播放时 currentIndex+1 是错的。
+        // 用 1dp 不可见 AsyncImage 预热:不引额外 Coil API,写的就是同一份缓存。
+        state.nextArtworkUri?.let { next ->
+            AsyncImage(
+                model = next,
+                contentDescription = null,
+                modifier = Modifier.size(1.dp).alpha(0f),
+            )
+        }
+
         // 背景层:全幅封面 + 纯色黑纱(半透明实色,非渐变)。
         // 封面态/歌词态共用 —— 两种状态只差在中间那张进度卡上,背景不换(用户要求);
         // 但歌词态黑纱加深(0.55→0.78),亮封面(录音棚/暖色实拍)会把白字歌词吃掉看不清(用户实测)
-        if (state.artworkUri != null) {
-            AsyncImage(
-                model = state.artworkUri,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
+        //
+        // 切歌时新封面要重新下载,直接换 URL 会闪一下空底(用户报的「切歌像没加载完」)。
+        // 做法与网易云等播放器一致:底层垫上一张已加载成功的封面,顶层加载当前曲封面,
+        // 加载完成后再淡入盖上去 → 全程无空帧、无生硬跳变。
+        // ⚠ 顶层 model 必须恒为当前曲的 artworkUri,不能拿旧 URL 当 model(那样新图永远不会被请求)。
+        var lastLoaded by remember { mutableStateOf<String?>(null) }
+        val target = state.artworkUri
+        // 顶层透明度:0=还是旧图,1=新图已就位
+        val fade = animateFloatAsState(
+            targetValue = if (target == null || target == lastLoaded) 1f else 0f,
+            animationSpec = tween(durationMillis = 320),
+            label = "artworkFade",
+        )
+        Box(Modifier.fillMaxSize()) {
+            if (target != null && lastLoaded != null && lastLoaded != target) {
+                AsyncImage(
+                    model = lastLoaded,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (target != null) {
+                AsyncImage(
+                    model = target,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .alpha(fade.value),
+                    onSuccess = { lastLoaded = target },
+                    // 加载失败也推进:否则 lastLoaded 永远停在上一首,背景会一直卡着旧图
+                    onError = { lastLoaded = target },
+                )
+            }
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (showLyric) 0.78f else 0.55f)))
-        } else {
-            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
         }
 
         val cardShape = RoundedCornerShape(28.dp)

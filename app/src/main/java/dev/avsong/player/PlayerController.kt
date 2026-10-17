@@ -301,6 +301,11 @@ data class PlayerState(
     /** 当前队列快照(含当前项);供队列页渲染。 */
     val queue: List<QueueEntry> = emptyList(),
     val currentIndex: Int = -1,
+    /**
+     * 下一首的封面(供播放页预取)。取 ExoPlayer 的 nextMediaItemIndex——
+     * 它已经算过 shuffle/repeat,**不能自己用 currentIndex+1**(随机播放时那是错的)。
+     */
+    val nextArtworkUri: String? = null,
 )
 
 /** 队列里的一项(仅展示字段)。 */
@@ -332,11 +337,19 @@ internal fun MediaController.toState(): PlayerState {
         isPlaying = isPlaying,
         isBuffering = playbackState == Player.STATE_BUFFERING,
         positionMs = currentPosition.coerceAtLeast(0),
-        durationMs = if (duration > 0) duration else 0,
+        // 新源 prepare 完之前 ExoPlayer 的 duration 是 C.TIME_UNSET/0,切歌瞬间会闪 00:00;
+        // 用 MediaItem extras 里携带的歌曲时长兜底(见 Song.toMediaItem)
+        durationMs = when {
+            duration > 0 -> duration
+            else -> meta.extras?.getLong(dev.avsong.ui.META_DURATION_SEC, 0L)?.times(1000) ?: 0L
+        },
         shuffleEnabled = shuffleModeEnabled,
         repeatMode = repeatMode,
         error = playerError?.cause?.message ?: playerError?.message,
         queue = queue,
         currentIndex = currentMediaItemIndex,
+        nextArtworkUri = nextMediaItemIndex
+            .takeIf { it in 0 until mediaItemCount }
+            ?.let { getMediaItemAt(it).mediaMetadata.artworkUri?.toString() },
     )
 }

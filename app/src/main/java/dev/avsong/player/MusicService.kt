@@ -138,6 +138,11 @@ class MusicService : MediaSessionService() {
                     .setTitle(title)
                     .setArtist(artist)
                     .apply { cover?.let { setArtworkUri(android.net.Uri.parse(it)) } }
+                    .setExtras(
+                        android.os.Bundle().apply {
+                            if (durationSec > 0) putLong(dev.avsong.ui.META_DURATION_SEC, durationSec)
+                        },
+                    )
                     .build(),
             )
             .build()
@@ -274,6 +279,7 @@ class MusicService : MediaSessionService() {
                 cover = md.artworkUri?.toString(),
                 // Media3 1.x:uri 挪进了 localConfiguration(裸 m.uri 不存在)
                 uri = m.localConfiguration?.uri?.toString(),
+                durationSec = md.extras?.getLong(dev.avsong.ui.META_DURATION_SEC, 0L) ?: 0L,
             )
         }.filter { it.bvid.isNotBlank() }
 

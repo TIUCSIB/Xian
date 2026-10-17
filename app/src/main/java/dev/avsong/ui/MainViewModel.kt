@@ -952,6 +952,10 @@ class MainViewModel(
     fun currentPosition(): Long = playerController.currentPosition()
 }
 
+/**
+ * 歌曲 → 播放项。时长写进 extras:ExoPlayer 的 `duration` 要等新源 prepare 完才有值,
+ * 切歌瞬间读到的还是 0,播放页会闪一下 00:00 的空进度(实测)。带上这份元数据兜底。
+ */
 fun Song.toMediaItem(): MediaItem = MediaItem.Builder()
     .setMediaId(mediaId)
     .setUri(playUri())
@@ -960,6 +964,14 @@ fun Song.toMediaItem(): MediaItem = MediaItem.Builder()
             .setTitle(title)
             .setArtist(artist)
             .apply { coverUrl?.let { setArtworkUri(android.net.Uri.parse(it)) } }
+            .setExtras(
+                android.os.Bundle().apply {
+                    if (durationSec > 0) putLong(META_DURATION_SEC, durationSec)
+                },
+            )
             .build(),
     )
     .build()
+
+/** MediaMetadata.extras 里存放歌曲时长的键(秒);播放页切歌瞬间的进度条兜底用。 */
+const val META_DURATION_SEC = "avsong.durationSec"

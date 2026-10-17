@@ -26,6 +26,8 @@ class PlaybackPersistenceStore(context: Context) {
         val artist: String,
         val cover: String?,
         val uri: String? = null,
+        /** 歌曲时长(秒):恢复现场后切歌瞬间的进度条兜底(ExoPlayer 的 duration 要等 prepare)。 */
+        val durationSec: Long = 0,
     )
 
     @Serializable
