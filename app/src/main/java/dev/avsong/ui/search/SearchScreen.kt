@@ -3,6 +3,8 @@ package dev.avsong.ui.search
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -95,6 +98,8 @@ fun SearchScreen(
     ) {
         // 深灰胶囊搜索框 + 联想浮层(Box 使浮层可 Z 轴覆盖下方内容)
         Box(Modifier.fillMaxWidth()) {
+        // 内层 Column:搜索框与内容必须纵向排布;若直接放 Box 子级会被层叠到顶部相互重叠
+        Column(Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -171,50 +176,6 @@ fun SearchScreen(
                     color = if (state.query.isNotBlank()) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-        }
-
-        }
-
-
-        // 联想浮层:Popup 独立窗口,天然悬浮于一切内容之上(不占布局、不推走历史/结果);
-        // 挂在搜索框正下方。仅 Idle 态显示——点搜索/键盘搜索后进入结果,浮层随之消失。
-        if (state.search == SearchUiState.Idle && state.query.isNotBlank() && suggests.isNotEmpty()) {
-            Popup(
-                alignment = Alignment.TopStart,
-                offset = with(LocalDensity.current) {
-                    IntOffset(16.dp.roundToPx(), 84.dp.roundToPx())
-                },
-            ) {
-                Column(
-                    modifier = Modifier
-                        .widthIn(max = 500.dp)
-                        .background(MaterialTheme.colorScheme.background),
-                ) {
-                    suggests.forEach { term ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onSuggestClick(term) }
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                Icons.Filled.Search,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                term,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
             }
         }
 
@@ -308,6 +269,49 @@ fun SearchScreen(
                     )
                 }
             }
+        }
+        }
+
+        // 联想浮层(2026-10-15 五修):从 Popup 独立窗口改为本页布局内覆盖层。
+        // Popup 是系统级窗口——盖在播放面板/队列抽屉之上、不随输入法避让、离开页面才销毁,
+        // 三个问题同根。布局内覆盖层:被上层面板正常遮住、随 app 窗口避让输入法、离页即销毁。
+        // 仅 Idle 态显示(点搜索/键盘搜索后进入结果,浮层随之消失)。
+        if (state.search == SearchUiState.Idle && state.query.isNotBlank() && suggests.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 16.dp, top = 68.dp, end = 16.dp)
+                    .zIndex(1f)
+                    .widthIn(max = 500.dp)
+                    .heightIn(max = 380.dp)
+                    .verticalScroll(rememberScrollState())
+                    .background(MaterialTheme.colorScheme.background),
+            ) {
+                suggests.forEach { term ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSuggestClick(term) }
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Filled.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            term,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
         }
     }
 }
