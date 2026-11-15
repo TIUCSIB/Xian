@@ -13,8 +13,8 @@ android {
         applicationId = "dev.avsong"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.2.6"
+        versionCode = 9
+        versionName = "0.2.7"
         // 版本信息注入 BuildConfig(「关于」页展示/检查更新比对用,一处改两处生效)
         buildConfigField("String", "VERSION_NAME", "\"${versionName}\"")
         buildConfigField("String", "PROJECT_URL", "\"https://github.com/TIUCSIB/Xian\"")
