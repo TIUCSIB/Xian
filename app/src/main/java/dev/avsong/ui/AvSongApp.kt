@@ -136,6 +136,8 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
     val currentTab = routeToTab(currentRoute)
 
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as dev.avsong.AvSongApp
+    // 播放面板固定深色(媒体面),需要 app 主题的 seed/hue 派生对应的深色方案
+    val themeState by app.themeStore.state.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var showFavoritePicker by remember { mutableStateOf(false) }
     // 全局登录弹窗:各页(首页未登录态/歌单错误区)的「去登录」统一走它(旧整页 LoginScreen 已删)
@@ -729,52 +731,61 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
             enter = slideInVertically(initialOffsetY = { it }),
             exit = slideOutVertically(targetOffsetY = { it }),
         ) {
-            PlayerScreen(
-                state = state.player,
-                lyric = state.lyric,
-                favoriteRepository = viewModel.favoriteRepository,
-                onCollapse = { showPlayerSheet = false },
-                onQueue = { showQueueSheet = true },
-                onPlayPause = viewModel::playPause,
-                onCycleMode = viewModel::cyclePlayMode,
-                onNext = viewModel::next,
-                onPrevious = viewModel::previous,
-                onSeek = viewModel::seekTo,
-                danmakuEnabled = app.settingsStore.state.value.danmakuEnabled,
-                danmakuMode = danmakuSettings.danmakuMode,
-                positionProvider = viewModel::currentPosition,
-                onLyricReplaced = { lines -> viewModel.replaceLyric(state.player.currentMediaId ?: "", lines) },
-                onAdjustLyric = viewModel::adjustLyricOffset,
-                lyricRepository = viewModel.lyricRepository,
-                getCsrf = { app.authStore.state.value.biliJct },
-                onSimilarSongs = if (state.player.currentMediaId != null) viewModel::playRelated else null,
-                onToggleVideo = if (state.player.currentMediaId != null) viewModel::toggleVideo else null,
-                onVideoSurfaceChanged = { surface -> app.playerController.setVideoSurface(surface) },
-                // 播放页爱心的本地歌单区:快照直接用当前播放曲的 PlayerState 字段拼
-                localPlaylists = localPlaylists2,
-                localPlaylistsState = viewModel.localPlaylistStore.playlists,
-                onUnfavoriteAll = {
-                    state.player.currentMediaId?.let { viewModel.unfavoriteEverywhere(it) }
-                },
-                unfavResult = viewModel.unfavResult.collectAsState().value,
-                onConsumeUnfavResult = viewModel::consumeUnfavResult,
-                onToggleLocal = { pl, checked ->
-                    val ps = state.player
-                    val bvid = ps.currentMediaId
-                    if (bvid != null) {
-                        val song = dev.avsong.domain.Song(
-                            bvid = bvid,
-                            title = ps.title.orEmpty(),
-                            artist = ps.artist.orEmpty(),
-                            coverUrl = ps.artworkUri,
-                            durationSec = if (ps.durationMs > 0) ps.durationMs / 1000 else 0,
-                        )
-                        if (checked) viewModel.removeSongFromLocalPlaylist(pl.id, bvid)
-                        else viewModel.saveSongToLocalPlaylist(pl.id, song)
-                    }
-                },
-                onCreateLocal = { name -> viewModel.createLocalPlaylist(name) },
-            )
+            // 播放面板固定深色:媒体面惯例(封面/视频下都是黑纱)。浅色主题下奶白卡片 +
+            // 深橄榄主色(高亮歌词/播放键)叠在灰底上又脏又低对比(用户反馈),这里整体换深色方案
+            dev.avsong.ui.theme.AvSongTheme(
+                dark = true,
+                seed = themeState.seed,
+                customHue = themeState.customHue,
+            ) {
+                PlayerScreen(
+                    state = state.player,
+                    lyric = state.lyric,
+                    favoriteRepository = viewModel.favoriteRepository,
+                    onCollapse = { showPlayerSheet = false },
+                    onQueue = { showQueueSheet = true },
+                    onPlayPause = viewModel::playPause,
+                    onCycleMode = viewModel::cyclePlayMode,
+                    onNext = viewModel::next,
+                    onPrevious = viewModel::previous,
+                    onSeek = viewModel::seekTo,
+                    danmakuEnabled = app.settingsStore.state.value.danmakuEnabled,
+                    danmakuMode = danmakuSettings.danmakuMode,
+                    positionProvider = viewModel::currentPosition,
+                    onLyricReplaced = { lines -> viewModel.replaceLyric(state.player.currentMediaId ?: "", lines) },
+                    onAdjustLyric = viewModel::adjustLyricOffset,
+                    lyricRepository = viewModel.lyricRepository,
+                    getCsrf = { app.authStore.state.value.biliJct },
+                    onSimilarSongs = if (state.player.currentMediaId != null) viewModel::playRelated else null,
+                    onToggleVideo = if (state.player.currentMediaId != null) viewModel::toggleVideo else null,
+                    onVideoSurfaceChanged = { surface -> app.playerController.setVideoSurface(surface) },
+                    // 播放页爱心的本地歌单区:快照直接用当前播放曲的 PlayerState 字段拼
+                    localPlaylists = localPlaylists2,
+                    localPlaylistsState = viewModel.localPlaylistStore.playlists,
+                    onUnfavoriteAll = {
+                        state.player.currentMediaId?.let { viewModel.unfavoriteEverywhere(it) }
+                    },
+                    unfavResult = viewModel.unfavResult.collectAsState().value,
+                    onConsumeUnfavResult = viewModel::consumeUnfavResult,
+                    onToggleLocal = { pl, checked ->
+                        val ps = state.player
+                        val bvid = ps.currentMediaId
+                        if (bvid != null) {
+                            val song = dev.avsong.domain.Song(
+                                bvid = bvid,
+                                title = ps.title.orEmpty(),
+                                artist = ps.artist.orEmpty(),
+                                coverUrl = ps.artworkUri,
+                                durationSec = if (ps.durationMs > 0) ps.durationMs / 1000 else 0,
+                            )
+                            if (checked) viewModel.removeSongFromLocalPlaylist(pl.id, bvid)
+                            else viewModel.saveSongToLocalPlaylist(pl.id, song)
+                        }
+                    },
+                    onCreateLocal = { name -> viewModel.createLocalPlaylist(name) },
+                    appDark = themeState.dark,
+                )
+            }
         }
     }
 }

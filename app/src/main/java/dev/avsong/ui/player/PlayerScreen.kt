@@ -169,6 +169,8 @@ fun PlayerScreen(
     onToggleVideo: ((onResult: (Boolean) -> Unit) -> Unit)? = null,
     /** 视频 surface 变更(挂画面传 Surface,摘画面传 null;MediaController 透传到服务端渲染)。 */
     onVideoSurfaceChanged: (android.view.Surface?) -> Unit = {},
+    /** app 主题是否深色:播放页自身固定深色,关闭时要按 app 主题恢复状态栏图标明暗。 */
+    appDark: Boolean = true,
 ) {
     var position by remember(state.currentMediaId, state.isPlaying) { mutableLongStateOf(state.positionMs) }
     var showLyric by remember { mutableStateOf(false) }
@@ -207,6 +209,14 @@ fun PlayerScreen(
     }
     // 全屏时返回键先退全屏(再按一次才收起播放面板)
     androidx.activity.compose.BackHandler(enabled = mvFullscreen) { mvFullscreen = false }
+    // 播放页固定深色(AvSongApp 用深色方案包住):面板存在期间状态栏图标改亮色,
+    // 关闭时按 app 主题恢复 —— 否则浅色模式下深色图标落在深色面板顶栏上看不见
+    DisposableEffect(appDark) {
+        val window = rootView.context.findActivity()?.window
+        val controller = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, rootView) }
+        controller?.isAppearanceLightStatusBars = false
+        onDispose { controller?.isAppearanceLightStatusBars = !appDark }
+    }
     // 歌词换源:候选抽屉(点 ⋮ 菜单「换歌词源」时拉三源候选,拉一次缓存到关闭)
     var showLyricPicker by remember { mutableStateOf(false) }
     // 歌词时间轴校准:独立抽屉(菜单「歌词时间调整」进入)

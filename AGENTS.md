@@ -136,6 +136,7 @@ app/src/main/java/dev/avsong/
 - 字体 Noto Sans SC 变量字体(`res/font/`,17.7MB):**必须单文件同时覆盖 CJK+拉丁**——Latin-only 字体缺 CJK 字形,系统回退字体不认 wght 轴,`FontWeight.Bold` 对中文完全失效(踩过)。换字体=替换 TTF + `Type.kt` 一处。
 - 反馈提示统一 `ThemedNoticeHost`(`ui/common/ThemedNotice.kt`,透明 Dialog 窗口,FLAG_NOT_FOCUSABLE|NOT_TOUCHABLE,不压暗不挡触摸),系统 Toast 已清零。当初不用 Snackbar/Toast 就是因为队列抽屉是独立窗口会盖住它们——别换回去。
 - 状态栏图标明暗由 MainActivity `isAppearanceLightStatusBars` 跟随主题(enableEdgeToEdge 默认判定只看系统,不够用)。
+- **播放页固定深色**(2026-11-15 用户反馈后定):PlayerScreen 在 AvSongApp 里用 `AvSongTheme(dark = true, seed, customHue)` 单独包一层——封面/视频底上本来就铺黑纱,浅色主题下奶白卡片 + 深橄榄主色(高亮歌词/播放键)叠上去又脏又低对比。面板存在期间状态栏图标切亮色(`appDark` 参数,销毁时按 app 主题恢复),全局其它页面仍是浅色。
 
 ### 主题与设置
 
