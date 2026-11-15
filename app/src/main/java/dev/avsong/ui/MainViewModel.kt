@@ -61,6 +61,8 @@ data class MainUiState(
     val query: String = "",
     val search: SearchUiState = SearchUiState.Idle,
     val searchHistory: List<String> = emptyList(),
+    /** 搜索页热词(音乐向,取自音乐中心综合榜歌名);首次进搜索页拉一次,失败为空。 */
+    val hotKeywords: List<String> = emptyList(),
     val player: PlayerState = PlayerState(),
     val lyric: LyricUiState = LyricUiState.None,
     // ---- 首页发现区(五个源共用一套状态)----
@@ -452,6 +454,23 @@ class MainViewModel(
         search()
     }
 
+    // 搜索页热词:首次进入搜索页拉一次(匿名接口,失败静默)。失败不置 loaded,
+    // 下次进页还能重试;成功才写状态,避免空列表把 UI 刷成「没有热词」
+    private var hotKeywordsLoaded = false
+    fun ensureHotKeywords() {
+        if (hotKeywordsLoaded) return
+        hotKeywordsLoaded = true
+        viewModelScope.launch {
+            val keywords = runCatching { BiliSongRepository.hotMusicKeywords() }
+                .getOrDefault(emptyList())
+            if (keywords.isEmpty()) {
+                hotKeywordsLoaded = false
+            } else {
+                _state.update { it.copy(hotKeywords = keywords) }
+            }
+        }
+    }
+
     /**
      * 播放:直接整队入列。真实 B 站歌曲用 bili:// URI,
      * ExoPlayer 加载时才经 ResolvingDataSource 现取直链(3h 过期问题天然自愈)。
@@ -795,6 +814,38 @@ class MainViewModel(
         }
     }
 
+    /**
+     * 相似歌曲电台(播放页入口):以当前曲拉相关推荐 40 条,**整队替换**起播。
+     * 语义=「换台」而非插播(插播留给长按行菜单);拉不到/为空时提示不换队。
+     */
+    fun playRelated() {
+        val current = _state.value.player
+        val bvid = current.currentMediaId ?: return
+        val title = current.title.orEmpty()
+        viewModelScope.launch {
+            try {
+                val related = BiliSongRepository.getRelated(bvid)
+                    .filter { it.bvid != bvid } // 相关列表常含自己,电台里重复出现很难受
+                if (related.isEmpty()) {
+                    _queueNotice.value = "没找到相似歌曲"
+                    return@launch
+                }
+                playQueueShuffled(related)
+                _queueNotice.value = "相似歌曲电台:基于「${title.take(20)}」"
+            } catch (e: Exception) {
+                _queueNotice.value = "相似歌曲拉取失败:${e.message}"
+            }
+        }
+    }
+
+    /** MV 画面开/关:自定义 session command 在 service 侧执行;结果回传 UI(驱动画面层)+ 提示条。 */
+    fun toggleVideo(onResult: (Boolean) -> Unit = {}) {
+        playerController.toggleVideo { toVideo ->
+            onResult(toVideo)
+            _queueNotice.value = if (toVideo) "MV 画面已开启" else "已切回纯音频"
+        }
+    }
+
     fun clearQueue() = playerController.clearQueue()
 
     /** 下载反馈走 Toast(抽屉是独立窗口,Snackbar 会被盖住)。 */
@@ -915,9 +966,9 @@ class MainViewModel(
                 delay(300)
             }
             _queueNotice.value = when {
-                fail == 0 -> "已收藏 \$ok 首到 \${folderIds.size} 个收藏夹"
+                fail == 0 -> "已收藏 $ok 首到 ${folderIds.size} 个收藏夹"
                 ok == 0 -> "收藏失败,请稍后重试"
-                else -> "成功 \$ok 首,失败 \$fail 首(网络波动可重试)"
+                else -> "成功 $ok 首,失败 $fail 首(网络波动可重试)"
             }
         }
     }
@@ -930,7 +981,7 @@ class MainViewModel(
                 if (song.aid > 0) aidCache[song.bvid] = song.aid
                 playerController.playNext(song.toMediaItem())
             }
-            _queueNotice.value = "已把 \${songs.size} 首插入下一首播放"
+            _queueNotice.value = "已把 ${songs.size} 首插入下一首播放"
         }
     }
 

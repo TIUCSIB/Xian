@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material3.AlertDialog
@@ -236,8 +238,10 @@ fun DownloadedScreen(
                             )
                             val status = when {
                                 t.state == dev.avsong.data.DownloadManager.State.QUEUED -> "排队中"
+                                t.state == dev.avsong.data.DownloadManager.State.PAUSED ->
+                                    if (t.progress in 0..100) "已暂停 ${t.progress}%" else "已暂停"
                                 t.state == dev.avsong.data.DownloadManager.State.FAILED -> "失败:${t.error}"
-                                t.progress in 0..100 -> "下载中 $t.progress%".replace("t.progress", t.progress.toString())
+                                t.progress in 0..100 -> "下载中 ${t.progress}%"
                                 else -> "下载中"
                             }
                             Text(
@@ -246,7 +250,9 @@ fun DownloadedScreen(
                                 color = if (t.state == dev.avsong.data.DownloadManager.State.FAILED) MaterialTheme.colorScheme.error
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            if (t.state == dev.avsong.data.DownloadManager.State.RUNNING && t.progress in 0..100) {
+                            val showBar = t.state == dev.avsong.data.DownloadManager.State.RUNNING ||
+                                t.state == dev.avsong.data.DownloadManager.State.PAUSED
+                            if (showBar && t.progress in 0..100) {
                                 LinearProgressIndicator(
                                     progress = { t.progress / 100f },
                                     modifier = Modifier
@@ -256,11 +262,27 @@ fun DownloadedScreen(
                                 )
                             }
                         }
-                        when (t.state) {
-                            dev.avsong.data.DownloadManager.State.FAILED -> TextButton(onClick = { app.downloadManager.retry(t.bvid) }) {
-                                Text("重试")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            when (t.state) {
+                                dev.avsong.data.DownloadManager.State.RUNNING,
+                                dev.avsong.data.DownloadManager.State.QUEUED -> IconButton(
+                                    onClick = { app.downloadManager.pause(t.bvid) },
+                                ) {
+                                    Icon(Icons.Rounded.Pause, contentDescription = "暂停下载")
+                                }
+                                dev.avsong.data.DownloadManager.State.PAUSED -> IconButton(
+                                    onClick = { app.downloadManager.resume(t.bvid) },
+                                ) {
+                                    Icon(Icons.Rounded.PlayArrow, contentDescription = "继续下载")
+                                }
+                                dev.avsong.data.DownloadManager.State.FAILED -> TextButton(
+                                    onClick = { app.downloadManager.retry(t.bvid) },
+                                ) {
+                                    Text("重试")
+                                }
+                                else -> Unit
                             }
-                            else -> IconButton(onClick = { app.downloadManager.cancel(t.bvid) }) {
+                            IconButton(onClick = { app.downloadManager.cancel(t.bvid) }) {
                                 Icon(Icons.Rounded.Close, contentDescription = "取消下载")
                             }
                         }

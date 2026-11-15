@@ -26,15 +26,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import kotlin.math.roundToInt
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.avsong.data.lyric.LyricLine
 import dev.avsong.ui.LyricUiState
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
 /**
@@ -56,11 +57,13 @@ fun LyricView(
     /** 拖动进度时的预览时间(非空=预览态:歌词滚到目标行并盖指示线);松手后传 null。 */
     previewMs: Long? = null,
 ) {
-    val activeColor = if (onArtwork) Color.White else MaterialTheme.colorScheme.onSurface
+    // 高亮行用品牌黄:白 vs 灰的对比在弧度衰减(圆柱透明度)下不够醒目,
+    // MV 同屏小视口里几乎看不出高亮(用户实测);黄=播放键/进度条的品牌语义,黑纱上对比最强
+    val activeColor = MaterialTheme.colorScheme.primary
     val inactiveColor = if (onArtwork) Color.White.copy(alpha = 0.55f)
     else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
-    val subActiveColor = if (onArtwork) Color.White.copy(alpha = 0.8f)
-    else MaterialTheme.colorScheme.onSurfaceVariant
+    val subActiveColor = if (onArtwork) MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
+    else MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
     val subInactiveColor = if (onArtwork) Color.White.copy(alpha = 0.4f)
     else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
     val hintColor = if (onArtwork) Color.White.copy(alpha = 0.7f)
@@ -111,16 +114,37 @@ private fun LyricLines(
         activeIndex = idx
     }
 
-    // 当前行变化时滚动到中央(用户手动滚动中不打断)
-    val density = LocalDensity.current
-    LaunchedEffect(activeIndex, lines) {
-        if (listState.isScrollInProgress) return@LaunchedEffect
-        // 行高约 80dp(双语当前行),偏移半行高让当前行中心≈视口中心
-        val halfLine = with(density) { 40.dp.toPx().toInt() }
-        listState.animateScrollToItem(activeIndex, -halfLine)
-    }
-
     BoxWithConstraints(Modifier.fillMaxSize()) {
+        // 当前行变化时把它滚到视口正中(用户手动滚动中不打断)。
+        // ⚠ scrollOffset 是「滚动距离」,不是「上移量」:正值=继续往前滚(内容上移)、
+        // 负值=往回滚(目标行在屏上更靠下)。contentPadding 已经是视口半高,offset=0 时
+        // 目标行「顶边」正落在视口中线;传 -maxHeight/2 会把它一路推到视口下缘之外
+        // (整条高亮看不见,实测踩过;半行高 40dp 那版只是沉到下半,方向也是错的)。
+        // 要让行心对齐中线,offset 只能是「目标行实测行高的一半」——行高不可预算(长句换行/有无译文),
+        // 所以先量再滚。⚠ 必须在 BoxWithConstraints 内:maxHeight 是它的作用域属性。
+        LaunchedEffect(activeIndex, lines, maxHeight) {
+            if (listState.isScrollInProgress) return@LaunchedEffect
+            suspend fun activeItemSize(): Int? =
+                listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIndex }?.size
+
+            var h = activeItemSize()
+            if (h == null) {
+                // 目标行不在可见区(seek/大跳行):先把它顶到中线,下一帧量到真实行高
+                listState.scrollToItem(activeIndex)
+                h = withTimeoutOrNull(400) {
+                    snapshotFlow { listState.layoutInfo }
+                        .first { info -> info.visibleItemsInfo.any { it.index == activeIndex } }
+                        .visibleItemsInfo.first { it.index == activeIndex }.size
+                }
+            }
+            if (h != null) {
+                listState.animateScrollToItem(activeIndex, h / 2)
+                // 高亮行字号更大:切换瞬间量到的可能还是「未激活」高度,按布局落地后的真实值再校一次
+                activeItemSize()?.let { real ->
+                    if (real != h) listState.animateScrollToItem(activeIndex, real / 2)
+                }
+            }
+        }
         LazyColumn(
             state = listState,
             contentPadding = PaddingValues(vertical = maxHeight / 2),
@@ -133,7 +157,13 @@ private fun LyricLines(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .graphicsLayer {
-                            // 距视口中心的归一化偏移(-1..1):越远越斜、越淡、越小 → 圆柱感
+                            // 距视口中心的归一化偏移(-1..1):越远越斜、越淡、越小 → 圆柱感。
+                            // ⚠ 当前行豁免:即使还没滚到正中也保持全亮 —— 衰减压在黄色高亮上
+                            // 会暗得像有遮罩(用户实测);颜色对比本来就是高亮的语义,不能被吃掉
+                            if (active) {
+                                alpha = 1f
+                                return@graphicsLayer
+                            }
                             val info = listState.layoutInfo
                             val vpCenter =
                                 (info.viewportStartOffset + info.viewportEndOffset) / 2f

@@ -22,6 +22,8 @@ import java.util.concurrent.ConcurrentHashMap
 object BiliDataSources {
 
     const val SCHEME = "bili"
+    /** MV 合成 scheme:`bili-mv://<bvid>` = 音频流+视频流 MergingMediaSource(逐曲 toggle 改写)。 */
+    const val MV_SCHEME = "bili-mv"
     private const val RETRY_WINDOW_MS = 1500L
 
     /** bvid → 上次解析时间(用于判断是否错误重试)。 */
@@ -30,6 +32,42 @@ object BiliDataSources {
     private val attempts = ConcurrentHashMap<String, Int>()
     @Volatile
     private var currentBvid: String? = null
+
+    /**
+     * resolver 通用逻辑:按 blocking 取流函数解析直链并做重试换源。
+     * [lane] 区分音/视频:MV 的 MergingMediaSource 两路几乎同时打开,
+     * 共用计数会把第二路误判成错误重试、直接落到备用 CDN(实测)。
+     */
+    private fun resolveTo(
+        uri: android.net.Uri,
+        dataSpec: DataSpec,
+        lane: String,
+        fetch: (String) -> List<String>,
+    ): DataSpec {
+        val bvid = uri.host ?: throw IOException("$SCHEME:// 缺少 bvid")
+        val key = "$lane:$bvid"
+        // 切到新曲目:重置计数(音/视频任意一路先到都算切换)
+        if (bvid != currentBvid) {
+            currentBvid?.let { attempts.clear(); lastResolveAt.clear() }
+            currentBvid = bvid
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        val prev = lastResolveAt[key]
+        val isRetry = prev != null && now - prev < RETRY_WINDOW_MS
+        lastResolveAt[key] = now
+        if (isRetry) {
+            attempts[key] = (attempts[key] ?: 0) + 1
+        } else {
+            attempts[key] = 0 // 正常加载/seek:回到主 CDN
+        }
+
+        val urls = fetch(bvid)
+        val attempt = attempts[key] ?: 0
+        val url = urls[minOf(attempt, urls.lastIndex)]
+
+        return dataSpec.buildUpon().setUri(android.net.Uri.parse(url)).build()
+    }
 
     fun create(context: Context): ResolvingDataSource.Factory {
         val http = BiliHttpDataSourceFactory.create()
@@ -41,31 +79,17 @@ object BiliDataSources {
             object : ResolvingDataSource.Resolver {
                 override fun resolveDataSpec(dataSpec: DataSpec): DataSpec {
                     val uri = dataSpec.uri
-                    if (!SCHEME.equals(uri.scheme, ignoreCase = true)) return dataSpec
-
-                    val bvid = uri.host ?: throw IOException("bili:// 缺少 bvid")
-                    // 切到新曲目:重置计数
-                    if (bvid != currentBvid) {
-                        currentBvid?.let { attempts.remove(it); lastResolveAt.remove(it) }
-                        currentBvid = bvid
-                        attempts[bvid] = 0
+                    val scheme = uri.scheme ?: return dataSpec
+                    return when {
+                        SCHEME.equals(scheme, ignoreCase = true) ->
+                            resolveTo(uri, dataSpec, lane = "audio") { BiliSongRepository.audioUrlsBlocking(it) }
+                        MV_SCHEME.equals(scheme, ignoreCase = true) ->
+                            resolveTo(uri, dataSpec, lane = "video") { bvid ->
+                                val cid = BiliSongRepository.viewCidBlocking(bvid)
+                                BiliSongRepository.videoUrlsBlocking(bvid, cid)
+                            }
+                        else -> dataSpec
                     }
-
-                    val now = SystemClock.elapsedRealtime()
-                    val prev = lastResolveAt[bvid]
-                    val isRetry = prev != null && now - prev < RETRY_WINDOW_MS
-                    lastResolveAt[bvid] = now
-                    if (isRetry) {
-                        attempts[bvid] = (attempts[bvid] ?: 0) + 1
-                    } else {
-                        attempts[bvid] = 0 // 正常加载/seek:回到主 CDN
-                    }
-
-                    val urls = BiliSongRepository.audioUrlsBlocking(bvid)
-                    val attempt = attempts[bvid] ?: 0
-                    val url = urls[minOf(attempt, urls.lastIndex)]
-
-                    return dataSpec.buildUpon().setUri(Uri.parse(url)).build()
                 }
             },
         )

@@ -52,6 +52,17 @@ data class VideoItem(
 @Serializable
 data class VideoOwner(val mid: Long = 0, val name: String = "")
 
+/**
+ * `/x/web-interface/archive/related?bvid=`(相关推荐,匿名 40 条)。
+ * ⚠ data 直接是数组(不是 {list:[...]} 包装),字段与 view 系同构,复用 [VideoItem]。
+ */
+@Serializable
+data class RelatedResponse(
+    val code: Int = 0,
+    val message: String = "",
+    val data: List<VideoItem> = emptyList(),
+)
+
 /** `/x/web-interface/history/cursor`(需登录;ps 上限 30,50 会 -400) */
 @Serializable
 data class HistoryResponse(

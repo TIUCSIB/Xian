@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -72,6 +73,8 @@ fun PlaybackSettingsScreen(
     onSetSleepTimer: (Int) -> Unit,
     hotReplyMode: Int,
     onHotReplyModeChange: (Int) -> Unit,
+    downloadConcurrency: Int,
+    onDownloadConcurrencyChange: (Int) -> Unit,
     onBack: () -> Unit,
 ) {
     var expandedKey by remember { mutableStateOf<String?>(null) }
@@ -226,6 +229,24 @@ fun PlaybackSettingsScreen(
                         onHotReplyModeChange(-1)
                         expandedKey = null
                     })
+                }
+                SettingsExpandableItem(
+                    icon = Icons.Rounded.Download,
+                    title = "下载并发",
+                    value = if (downloadConcurrency <= 1) "串行" else "$downloadConcurrency 个",
+                    expanded = expandedKey == "download",
+                    onToggle = { expandedKey = if (expandedKey == "download") null else "download" },
+                ) {
+                    listOf(1, 2, 3).forEach { n ->
+                        SettingsOptionRow(
+                            label = if (n == 1) "1 个(串行,最稳)" else "$n 个",
+                            selected = n == downloadConcurrency,
+                            onClick = {
+                                onDownloadConcurrencyChange(n)
+                                expandedKey = null
+                            },
+                        )
+                    }
                 }
             }
             Spacer(Modifier.navigationBarsPadding().height(8.dp))

@@ -87,6 +87,20 @@ data class Dash(
     val audio: List<AudioStream> = emptyList(),
     val flac: Flac? = null,
     val dolby: Dolby? = null,
+    // ⚠ 实测匿名也返回(fnval=4048),非会员封顶 480P;可能缺省,必须可空列表
+    val video: List<VideoStream>? = null,
+)
+
+@Serializable
+data class VideoStream(
+    val id: Int = 0, // 质量档:16=360P 32=480P 64=720P 80=1080P(高档需会员)
+    @SerialName("baseUrl") val baseUrl: String = "",
+    @SerialName("backupUrl") val backupUrl: List<String> = emptyList(),
+    val bandwidth: Long = 0,
+    val codecs: String = "",
+    val width: Int = 0,
+    val height: Int = 0,
+    @SerialName("frameRate") val frameRate: String = "",
 )
 
 @Serializable

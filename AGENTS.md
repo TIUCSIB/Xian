@@ -58,10 +58,10 @@ app/src/main/java/dev/avsong/
 │   ├── lyric/LyricRepository.kt # ★ 歌词多源:B站AI字幕→bgm→网易云+时长校验
 │   └── remote/             # DTO(BiliDtos 含 flac/dolby)+ WbiSign(备用)
 ├── player/
-│   ├── MusicService.kt     # MediaSessionService + 现场持久化 + 交叉淡入淡出
+│   ├── MusicService.kt     # MediaSessionService + 现场持久化 + 交叉淡入淡出 + MV 合成源/自定义命令
 │   ├── PlayerController.kt # UI↔服务桥:withController {} + PlayerState 流 + 队列操作
 │   ├── PlaybackPersistenceStore.kt # 队列/进度/模式快照(⚠ PersistedItem 带 uri)
-│   ├── BiliDataSources.kt  # ★ bili:// → ResolvingDataSource:现取直链+CDN换源+file://分发
+│   ├── BiliDataSources.kt  # ★ bili:// 与 bili-mv:// → ResolvingDataSource:现取直链+CDN换源+file://分发
 │   └── BiliHttpDataSourceFactory.kt  # 带 Referer 的 DefaultHttpDataSource
 └── ui/
     ├── AvSongApp.kt        # Scaffold + NavHost + 迷你条/底栏熔接 + 播放面板 + 各弹窗接线
@@ -101,6 +101,11 @@ app/src/main/java/dev/avsong/
 14. **收藏夹清空后 `resource/list` 回 `medias:null`**(不是 `[]`):DTO 声明可空 + `.orEmpty()`,否则 kotlinx explicitNulls 抛异常(和陷阱 10 的 dolby null 同根因)。
 15. **离线曲播放三处联动坑**:① `BiliDataSources` 的 resolver 下游必须包 `DefaultDataSource.Factory(context, http)` 按 scheme 分发(裸 `DefaultHttpDataSource` 只认 http);② Media3 1.x 取 uri 用 `MediaItem.localConfiguration?.uri`(裸 `m.uri` 编译不过);③ 现场快照 `PersistedItem` 必须存 `uri`,否则重启后离线曲被还原成 bili:// 断网即挂。下载曲的 `Song` 保持 `bvid/mediaId=真实bvid`、只把 `audioUrl` 填 `file://…`。
 16. **Cookie 续期三个实测坑**(前两个都表现为 correspond 404,极易误判):① `correspondPath` 必须用 `cookie/info` 返回的 **timestamp** 做 RSA,**本地时间戳一律 404**;② JDK 的 `OAEPWithSHA-256AndMGF1Padding` 默认 MGF1 是 SHA-1,必须显式 `MGF1ParameterSpec.SHA256`,否则密文错 → 404;③ correspond 响应是 gzip。另:`ac_time_value` 在轮询响应的 **`data.refresh_token` 平级字段**(不在 `data.url` 里,照 BiliTune 只解析 url 会拿到 null)。配方见 docs/bilibili-api.md §15。
+17. **MediaController 侧拿不到 MediaItem.uri**:`currentMediaItem.localConfiguration` 跨 binder 是 null(uri 是 session 私有数据)。要在 controller 侧判断/改当前曲 uri(如 MV 开关)必须走**自定义 session command**(service 端执行 replaceMediaItem);`ConnectionResult` 若手写 accept() 忘带 `DEFAULT_PLAYER_COMMANDS` 会把 session actions 压到只剩 128(迷你条消失、播放键失灵,实测)——用 `AcceptedResultBuilder(session)` 叠加 session 命令最稳。
+18. **`MediaController.sendCustomCommand` 必须主线程调**(controller 绑定创建线程,IO 调用直接 IllegalStateException「wrong thread」);返回的 ListenableFuture.get() 是阻塞操作,要切 `Dispatchers.IO` 等。
+19. **本机 Gradle 拉 Google Maven 超时**:dl.google.com 直连 Read timed out,但 git 代理(`127.0.0.1:10809`)可用——编译命令加 `-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=10809`(别写进 gradle.properties,代理不一定常开)。
+20. **MergingMediaSource(音视频合并)两路数据源几乎同时打开**:resolver 的错误重试计数若按 bvid 单值记,第二路会被误判成「错误重试」直接落到备用 CDN——`BiliDataSources` 的计数 key 必须带音/视频 lane。
+21. **MV 态不能用 item uri 判断**:`biliMediaSourceFactory` 对 MV 曲返回 `MergingMediaSource`,其 `getMediaItem()` 取第一个子源(音频轨)的 item —— 播放列表里 MV 曲的 uri 恒为 `bili://`(实测)。事实源只能是 `MediaMetadata.extras` 的 `is_video`(toggle 时写、`PlayerState.isVideo` 跨 binder 回读):按 uri.scheme 判断会「只能开、关不掉」(用户报的点了不切换);恢复现场也要按快照 uri 还原这个标记。UI 的 MV 开关一律用 `state.isVideo`,别本地 remember(service 的移除+插回会让 mediaId 瞬时变化重置本地态)。
 
 ## 代码约定
 
@@ -135,7 +140,7 @@ app/src/main/java/dev/avsong/
 ### 主题与设置
 
 - 色板+色相轮盘走 ModalBottomSheet,**不自动关**(逐色预览);轮盘拖动 `previewHue` 只改内存、松手 `persistHue` 落盘(每帧写盘太重)。
-- 设置卡在「我的」页,展开后进 `PlaybackSettingsScreen`(音质/历史上限/倍速/睡眠/热评);选项用 `SettingsExpandableItem` **行内展开**(用户否掉了弹抽屉样式),同一时间只展开一项。
+- 设置卡在「我的」页,展开后进 `PlaybackSettingsScreen`(音质/历史上限/倍速/睡眠/热评/下载并发);选项用 `SettingsExpandableItem` **行内展开**(用户否掉了弹抽屉样式),同一时间只展开一项。
 - 倍速持久化在 `SettingsStore.playbackSpeed`;⚠ app 启动 collect settings **必须 `launch(Dispatchers.Main)`**——appScope 是 Dispatchers.Default,MediaController 跨线程调 `setPlaybackSpeed` 直接 IllegalStateException 崩(踩过)。
 - 睡眠定时只存内存不持久化(睡醒残留倒计时比丢设置更糟);到点只 pause 不 toggle,否则恰好暂停时被反手起播。
 - 硬币数是 nav 的 `data.money`,`data.coin` 是 B 币余额常缺省(docs §9);进「我的」tab 静默刷一次资料(只刷一次防 collect 循环)。
@@ -144,6 +149,8 @@ app/src/main/java/dev/avsong/
 ### 播放与队列
 
 - 点歌行为:**列表点行 = `playNow`(插当前曲后一位立即播,已在队列跳播,不换队列)**;「播放全部/随机播放」= 整队替换。两种意图各有入口,别混。
+- **相似歌曲电台**(播放页信息卡电台键,2026-11-14):`archive/related?bvid=` 匿名 40 条(data 裸数组,字段与 view 系同构,复用 VideoItem)→ 过滤自己 → `playQueueShuffled` **整队替换**(换台语义,不是插播);空/失败只提示不换队。
+- **MV 画面播放**(顶栏「⋮」菜单项,2026-11-14):开关 = 自定义 session command `avsong.TOGGLE_VIDEO`(陷阱 17/18)→ service 端**逐曲「移除+原位插回」**:pause → removeMediaItem → addMediaItem(uri 翻转 bili://↔bili-mv://)→ 按 mediaId(bvid)找新 index → seekTo(原进度) → 续播。**只作用于当前曲**,shuffle 切下一首回纯音频(想看再点一次)。⚠ shuffle 队列下 **replaceMediaItem 必然重排跳歌**(三种姿势全踩:逐曲 replace 甩飞当前项;整队 setMediaItems 异步读旧值+甩飞;同 uri replace 复用旧源黑屏/加 nonce 卡 buffering)——remove+add 的「remove 瞬间自动前移」由 pause 抑制,插回按 bvid 定位不受 shuffle order 影响。关 MV 时 UI 先摘 surface 再发命令,否则 renderer 移除延迟期间 SurfaceView 残帧盖住恢复的封面(实测)。视频流选路:avc 编码优先(兼容性)、**取 playurl 返回的最高档**(登录自动 1080P,匿名 480P),`BiliSongRepository.videoUrlsBlocking`。画面层在 PlayerScreen:`mvActive = state.isVideo`(metadata extras 回读,**见陷阱 21**,不做本地 remember)驱动 SurfaceView 居中于顶栏与卡片之间(padding bottom 300dp,全屏居中会被信息卡压住下沿);比例用 ExoPlayer 真实 VideoSize(videoWidth/Height 经 PlayerState 流,固定 16:9 会压扁非 16:9 源);**MV 态跳过封面背景层**(封面图会盖住 SurfaceView 的视频);Surface 双保险 = holder callback(destroyed 摘)+ LaunchedEffect(mvActive, currentMediaId, isBuffering, isPlaying) 重发(renderer 重建后 holder 不再回调 created,不补挂就黑屏);MV+歌词同屏 = 歌词态上半区视频条(weight 0.62)+歌词区(weight 0.38,自带深纱 0.72 保白字可读)。切源/缓冲期(`state.isVideo && (videoWidth<=0 || isBuffering)`)画面层盖「MV 加载中」占位——视频轨配置前那块是黑的,不提示会被当成点了没反应。**MV 全屏**(画面层右下角 ⛶):全屏层只留画面(顶栏/卡片/歌词全被盖住),进全屏锁 `SENSOR_LANDSCAPE` + 隐藏系统栏,退出(右上 × / 返回键)显式回 `PORTRAIT`——推 UNSPECIFIED 在「自动旋转关闭」的设备上会永远停在横屏(实测);`MainActivity` 加了 `configChanges`(不接管旋转会重建 Activity 清掉面板/歌词态),两个条状视频层在 `mvFullscreen` 时停止组合,保证同时只有一个 SurfaceView。
 - 播放队列唯一入口 = 迷你条/播放页的队列抽屉(ModalBottomSheet,双 tab「当前播放/历史播放」),无独立队列页。历史播放 = 本地 `PlayHistoryStore`,**不用 B 站 history 接口**(那是观看历史,app 播放不上报)。
 - **点当前曲 = 暂停/续播**(2026-10-17):队列抽屉两个 tab + 独立播放历史页统一走 `playPause()`。⚠ `playFromHistory` 会 `seekTo(idx, 0)` 从头重播,绝不能用于当前曲(用户报的「点历史里的当前曲又重播」根因)。判断用 `songs[index].mediaId == currentMediaId`。
 - **列表行不显示序号**(2026-10-17 用户要求):首页榜单、队列抽屉、歌单详情一律去掉 01/02 序号。当前曲的播放态**叠在封面上**(黑纱 0.45 + 白音波条/白三角),**不要单占行首一列**——单列会让当前曲整行右移、与其它行错位(用户点名不协调)。`SongList`/`SongRow` 的 `rank` 参数已整条删除。
@@ -167,6 +174,9 @@ app/src/main/java/dev/avsong/
 - **歌单详情多选模式(2026-10-15 加)**:`PlaylistDetailContent` 内置完整多选态——入口=顶栏 ⋮「批量管理」(队列抽屉另有并行会话同日做的队列版多选,两套入口共享 BatchFavoriteDialog)。多选态:顶栏=「已选 N/M+全选/反选」,行序号位变圆形勾选框(点行=切换选中,不触发播放),头部/进度行/定位钮隐藏,底部浮 BatchActionBar(下载/收藏/下一首/入队/移除,纯色圆角胶囊)。要点:① 范围=已加载部分(不为多选拉全量);② 批量收藏=BatchFavoriteDialog 勾夹组合 →`MainViewModel.favoriteSongs(songs, folderIds)`(逐首 fetchAid→modify,300ms 间隔防 -412,resource/deal 幂等;与 favoriteFromQueue 同构,Song 版);③ 批量下一首播放=`playNextBatch`(按列表顺序逐首 playNext,保持相对顺序);④ 批量下载走现成 downloadAll(Manager 去重);⑤ 移除键按歌单类型传(onRemove/removeLabel)。三个详情页签名新增 onPlayNextBatch/onAddToQueueBatch/onFavoriteBatch/onDownloadAll;LibraryViewModel 三处 favRepo 由 private 改 val(详情页弹窗要用)。
 - **歌单详情头部三胶囊(2026-10-15 用户改版)= 播放(黄)/下载/多选**——「随机播放」胶囊删除(用户:完全不需要;随机仍可从队列抽屉模式胶囊开)。DetailHeader 签名相应变为onPlayAll/onDownloadAll/onEnterSelect;PlaylistDetailContent 参数加 onDownloadAllParam(整队下载)。⚠ 多选底部 BatchActionBar 必须纵向紧凑(计数行+**等宽**按钮行,Modifier.weight(1f)):首版横排+横向滚动在 360dp 窄屏把「下载/移除」挤出可视区(用户实测只见三个键),且移除键文案别做removePrefix 拼接,直接传「移除」。
 - **歌单详情简介上屏 + 头部下载(2026-10-15)**:① 收藏夹简介在 `resource/list` 响应的`data.info.intro`(**每页都带**,FavResourceInfo DTO;不需要为简介另发请求);合集简介在`seasons_archives_list` 的 `meta.intro`(SeasonMeta)。链路:FavResourceListData.info →FolderContents.intro → FolderContentViewModel.UiState;SeasonMeta.intro → Meta.intro →CollectionContentViewModel.UiState。详情页 subtitle 渲染(合集=UP 名 · 简介拼接,收藏夹=简介)。本地歌单无简介(纯本地无此概念)。② 头部「下载」胶囊 = `PlaylistDetailContent.onDownloadAllParam`(整队入下载队列),三详情页接各自 onDownloadAll —— 首版忘了传参,点了没反应(共享组件签名带默认值的老坑:编译不报错、静默无动作)。
+- **换歌词源 / 歌词时间调整 = 顶栏「⋮」菜单里的两个独立入口**(2026-11-15 用户定版,替换掉贴歌词区右上角的 SwapHoriz 悬浮侧栏):点「换歌词源」弹**抽屉**(三源候选 + 手动搜索,点选即应用);点「歌词时间调整」弹**独立抽屉**(提前/延后 ±0.5s 连点叠加,顶部回显 `LyricUiState.Ready.offsetMs`)。候选列表用 `heightIn(max=380.dp)+verticalScroll` 防长列表把抽屉顶满屏。两入口都只在有当前曲时显示。
+- **歌词高亮两处易踩**:① 当前色用品牌黄(白 vs 灰在小视口对比不足);② graphicsLayer 弧度衰减(alpha 最高降 72%)对**当前行豁免**——衰减叠在黄色上会暗得像有遮罩(用户实测「高亮还是很暗」)。
+- **歌词滚动居中 = `contentPadding = 视口半高` + `animateScrollToItem(idx, 实测行高/2)`**(2026-11-15 实测修正):`scrollOffset` 是「滚动距离」不是「上移量」——正值=内容上移、**负值=目标行往下**,`-maxHeight/2` 会把高亮行一路推出视口下缘(整条看不见,踩过;更早的 -40dp 版只是沉到下半,方向同样错)。行高不可预算(长句换行/有无译文),必须先量;切行瞬间量到的可能还是未激活高度,布局落地后要再校一次。LaunchedEffect 必须在 BoxWithConstraints 内(maxHeight 是其作用域属性)。
 - 热评弹幕:`ReplyRepository` 拉 `/x/v2/reply/main?type=1&oid=<aid>&mode=3`(docs §16),3 轨道飘过,`SettingsStore.danmakuEnabled` 开关(默认开);不消费点击,不挡封面/歌词手势。**固定首页 20 条不翻页**(用户实测拍板:mode=3 第 3 页起混入大量 0 赞低质评论,「热评」语义不成立;翻页游标必须用响应 cursor.next,next=1 自增会原样返回第一页)。评论点赞 = POST /x/v2/reply/action(csrf),回显零成本——响应每条自带 action 字段(0/1),乐观翻转+失败回滚。
 - 迷你条与底栏**熔接为一个圆角容器**:迷你条 24dp 上圆角、底栏下圆角、中缝贴合,经 `shape`/`outerPadding` 参数按同屏与否动态传形;播放页两者都隐藏。全局列表 `contentPadding bottom ≥ 120dp` 避让,否则最后一排被裁半截。
 - 迷你条播放键带环形进度(Canvas 弧),**图标 18dp + 环 22dp(用户多轮收敛的最终尺寸,别再放大)**;缓冲中(`PlayerState.isBuffering`)换 18dp 小转圈防连点。
@@ -195,11 +205,13 @@ app/src/main/java/dev/avsong/
 - 「存入本地歌单」**统一走 FavoritePickerDialog 双区**(上半 B 站收藏夹、下半本地歌单,勾选=存入/移出、就地新建)——独立的存歌单菜单项已删(与收藏重复,用户要求收敛)。
 - 播放本地歌单 `playLocalPlaylist`:快照全量内存、无补全循环;**离线联动 = 按 bvid 查 `DownloadedStore` 元数据拿 fileName→`file://` 填 audioUrl**——⚠ 别用 fileOf 拼文件名(标题快照与下载时不一致)。
 - 已下载:文件名 `<bvid>_<安全标题>.m4a`(防同名覆盖);`scanOrphans()` 开页双向同步(剪「有记录无文件」、补「有文件无记录」);下载页顶栏放大镜 = 本地过滤搜索(纯内存不走网络)。
-- 未做(等真需要):下载并发队列/进度/取消、下载目录可选、共享目录。
+- **下载队列(2026-11-15 补齐)= 并发可调 + 进度 + 暂停/续传 + 取消/重试**:并发上限在设置「下载并发」(1~3,默认串行;越高越容易撞 -412),`DownloadManager.pump()` 按上限拉起 job;进度按已收字节/Content-Length;暂停保留 `.part`(边下边写 `<bvid>_<标题>.m4a.part`),恢复按已有字节发 `Range` 续传——206 追加 / 200 清空重下 / 416 清掉重来一次,完成后改名成正式文件;**暂停/取消/失败三态由协程取消 + 任务表状态区分**(PAUSED 保 .part,取消删 .part,失败留 .part 可重试);队列状态全在内存,进程被杀后排队任务消失,残留 `.part` 在 DownloadManager 构造时清理(此时必无活任务)。
+- 未做(等真需要):下载目录可选(需 SAF/content URI,整条存储链要改)、共享目录。
 
 ### 搜索页
 
 - 联想 = `androidx.compose.ui.window.Popup` 浮层(独立窗口,不占布局不推走历史/结果,点外部自动关)——**别用 Column+zIndex**(浮层与 when 内容非同父时 zIndex 无效,平铺进 Column 又推走内容,两版都被否);**仅 Idle 态显示**(任何态显示会挂在结果页不消失);250ms 防抖 + mapLatest;阈值 ≥1 字。配方 docs §12。
+- 搜索页热词 = **B 站音乐中心综合榜前 10 首歌名**(`rankingBlocking(1)` 的 `musicTitle`,与首页热歌榜同源),**别用全站热搜 `search/square`**(实测全是电竞/时政新闻,对音乐 App 零引导价值);`MainViewModel.ensureHotKeywords()` 首次进页拉一次(失败静默、下次重试),Idle 态在历史下方渲染「热门搜索」序号 chips,点词走 `searchFromHistory`(会进历史)。
 - 头部计数「已加载 N / 共 N」诚实显示:⚠ B 站 `numResults` 封顶 1000,无真实总数,勿接。
 - 搜索中 `Loading(previous)` 携带旧结果不闪白;首搜显示 `SkeletonList` 骨架(纯 alpha 呼吸,合规禁渐变)。
 - 历史 chip 连点竞态:`searchGeneration` 代次守卫 + job 取消,旧响应后到被丢弃;清空历史 = 模态确认;键盘 imeAction=Search 直搜。

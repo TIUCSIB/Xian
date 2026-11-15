@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.rounded.MusicOff
+import androidx.compose.material.icons.rounded.Whatshot
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -40,6 +41,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,12 +86,16 @@ fun SearchScreen(
     onHistoryClick: (String) -> Unit = {},
     onHistoryRemove: (String) -> Unit = {},
     onHistoryClear: () -> Unit = {},
+    /** 热词首次进页拉一次(音乐榜歌名);失败静默,不影响搜索。 */
+    onEnsureHotKeywords: () -> Unit = {},
     onPlayNext: (Song) -> Unit = {},
     onAddToQueue: (Song) -> Unit = {},
     onFavorite: (Song) -> Unit = {},
     onDownload: (Song) -> Unit = {},
 ) {
     val localFocusManager = LocalFocusManager.current
+    // 进页拉一次热搜词(VM 内部去重,重复进页不再请求)
+    LaunchedEffect(Unit) { onEnsureHotKeywords() }
     Column(
         Modifier
             .fillMaxWidth()
@@ -252,21 +258,30 @@ fun SearchScreen(
             }
             is SearchUiState.Error -> StateHint(Icons.Rounded.MusicOff, search.message, "检查网络后重试,或换个词")
 
-            // Idle:搜索历史 + 提示
+            // Idle:搜索历史 + 热搜词 + 提示(热词是引导,历史为空时也照常展示)
             SearchUiState.Idle -> {
-                if (state.searchHistory.isNotEmpty()) {
-                    HistoryChips(
-                        history = state.searchHistory,
-                        onClick = onHistoryClick,
-                        onRemove = onHistoryRemove,
-                        onClear = onHistoryClear,
-                    )
-                } else {
-                    StateHint(
-                        Icons.Filled.Search,
-                        "搜点什么吧",
-                        "支持歌名 / 歌手 / MV,也可直接粘贴 BV 号或分享链接",
-                    )
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                    if (state.searchHistory.isNotEmpty()) {
+                        HistoryChips(
+                            history = state.searchHistory,
+                            onClick = onHistoryClick,
+                            onRemove = onHistoryRemove,
+                            onClear = onHistoryClear,
+                        )
+                    }
+                    if (state.hotKeywords.isNotEmpty()) {
+                        HotSearchChips(
+                            keywords = state.hotKeywords,
+                            onClick = onHistoryClick,
+                        )
+                    }
+                    if (state.searchHistory.isEmpty() && state.hotKeywords.isEmpty()) {
+                        StateHint(
+                            Icons.Filled.Search,
+                            "搜点什么吧",
+                            "支持歌名 / 歌手 / MV,也可直接粘贴 BV 号或分享链接",
+                        )
+                    }
                 }
             }
         }
@@ -406,6 +421,70 @@ private fun HistoryChips(
                                 indication = null,
                             ) { onRemove(term) },
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 热词 chips(音乐中心综合榜歌名)。前三名带品牌色序号,点词即搜(走历史点击同一条路,
+ * 搜过就进历史)。与历史 chips 同款纯色胶囊、无涟漪小控件约定。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun HotSearchChips(
+    keywords: List<String>,
+    onClick: (String) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Rounded.Whatshot,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "热门搜索",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            keywords.forEachIndexed { index, term ->
+                Row(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .clickable { onClick(term) }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (index < 3) {
+                        Text(
+                            "${index + 1}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(end = 5.dp),
+                        )
+                    }
+                    Text(
+                        term,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 180.dp),
                     )
                 }
             }

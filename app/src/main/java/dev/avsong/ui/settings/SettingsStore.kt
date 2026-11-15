@@ -41,6 +41,8 @@ object SettingsStore {
         val danmakuEnabled: Boolean = true,
         /** 倍速播放(持久化;用户要求放「我的」页设置,是全局偏好而非每首歌的临时态)。 */
         val playbackSpeed: Float = 1.0f,
+        /** 下载并发上限(1~3,持久化;默认串行。并发越高越容易撞 B 站限流 -412)。 */
+        val downloadConcurrency: Int = 1,
     )
 
     /** 倍速档位(「我的」页可选;循环切换同序)。 */
@@ -62,6 +64,7 @@ object SettingsStore {
     private val KEY_DANMAKU = booleanPreferencesKey("danmaku_enabled")
     private val KEY_DANMAKU_MODE = intPreferencesKey("danmaku_mode")
     private val KEY_SPEED = floatPreferencesKey("playback_speed")
+    private val KEY_DOWNLOAD_CONCURRENCY = intPreferencesKey("download_concurrency")
 
     fun init(context: Context) {
         if (appContext == null) appContext = context.applicationContext
@@ -76,6 +79,7 @@ object SettingsStore {
             danmakuEnabled = p[KEY_DANMAKU] ?: true,
             danmakuMode = p[KEY_DANMAKU_MODE] ?: 0,
             playbackSpeed = p[KEY_SPEED]?.takeIf { it > 0f } ?: 1.0f,
+            downloadConcurrency = (p[KEY_DOWNLOAD_CONCURRENCY] ?: 1).coerceIn(1, 3),
         )
     }
 
@@ -97,6 +101,13 @@ object SettingsStore {
     fun setDanmakuMode(value: Int) {
         _state.update { it.copy(danmakuMode = value) }
         scope.launch { datastore.edit { it[KEY_DANMAKU_MODE] = value } }
+    }
+
+    /** 下载并发(1~3):只影响之后的任务调度,已跑的 worker 不动。 */
+    fun setDownloadConcurrency(value: Int) {
+        val v = value.coerceIn(1, 3)
+        _state.update { it.copy(downloadConcurrency = v) }
+        scope.launch { datastore.edit { it[KEY_DOWNLOAD_CONCURRENCY] = v } }
     }
 
     /** 倍速变更:落盘并即时应用到播放器(播放中也能立刻变速)。 */

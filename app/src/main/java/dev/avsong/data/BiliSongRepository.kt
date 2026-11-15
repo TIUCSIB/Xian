@@ -8,6 +8,7 @@ import dev.avsong.data.remote.HistoryResponse
 import dev.avsong.data.remote.PlayUrlResponse
 import dev.avsong.data.remote.RankResponse
 import dev.avsong.data.remote.RcmdResponse
+import dev.avsong.data.remote.RelatedResponse
 import dev.avsong.data.remote.SearchResponse
 import dev.avsong.data.remote.SpiResponse
 import dev.avsong.ui.settings.SettingsStore
@@ -100,6 +101,22 @@ object BiliSongRepository : SongRepository {
         }.getOrDefault(emptyList())
     }
 
+    /**
+     * 搜索页热词(音乐向):取 B 站音乐中心「综合榜」前 N 首的歌名。
+     * ⚠ 不要用全站热搜 /x/web-interface/search/square:实测全是电竞/时政新闻(BLG 夺冠…),
+     * 对音乐 App 毫无引导价值;音乐榜的 musicTitle 才是能搜到歌的词。
+     * 失败/空一律返回空列表 —— 热词只是引导,绝不能打断主搜索。
+     */
+    suspend fun hotMusicKeywords(limit: Int = 10): List<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            rankingBlocking(1)
+                .map { it.title }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .take(limit)
+        }.getOrDefault(emptyList())
+    }
+
     private fun avToBvidBlocking(av: String): String? = runCatching {
         val resp = getJson("$baseUrl/x/web-interface/view?aid=$av", referer = BiliConstants.REFERER)
         json.decodeFromString<ViewResponse>(resp).data?.bvid
@@ -148,6 +165,22 @@ object BiliSongRepository : SongRepository {
             page = page,
             hasMore = data != null && !data.noMore, // no_more=true 才是没有下一页
         )
+    }
+
+    /**
+     * 相关推荐(相似歌曲电台):一次 40 条,data 裸数组,字段与 view 系同构。
+     * 失败返回空列表(电台是锦上添花,调用方据此提示,不打断播放)。
+     */
+    suspend fun getRelated(bvid: String): List<Song> = withContext(Dispatchers.IO) {
+        ensureBuvid()
+        runCatching {
+            val resp = getJson(
+                "$baseUrl/x/web-interface/archive/related?bvid=$bvid",
+                referer = "https://www.bilibili.com/video/$bvid",
+            )
+            json.decodeFromString<RelatedResponse>(resp)
+                .data.mapNotNull { it.toSong() }
+        }.getOrDefault(emptyList())
     }
 
     override suspend fun getMusicRanking(): List<Song> = withContext(Dispatchers.IO) {
@@ -253,6 +286,43 @@ object BiliSongRepository : SongRepository {
         if (play.code != 0) throw IOException("playurl 错误 ${play.code}: ${play.message}")
         val dash = play.data?.dash ?: throw IOException("无可用音频流(可能需要大会员)")
         return pickStream(dash)
+    }
+
+    /**
+     * 取视频直链列表(MV 画面用):优先 avc(兼容性最好),各编码组内取最高档 id
+     * (id 越大画质越高:16=360P 32=480P 64=720P 80=1080P,1080P 需登录、更高档需大会员;
+     * BiliHttp 自动带登录 Cookie,登录用户自动拿到可用最高档)。
+     * 结构与音频一致:主链在前、backup 在后,resolver 轮换取源。
+     */
+    @Throws(IOException::class)
+    fun videoUrlsBlocking(bvid: String, cid: Long): List<String> {
+        val url = (baseUrl + "/x/player/playurl").toHttpUrl().newBuilder()
+            .addQueryParameter("bvid", bvid)
+            .addQueryParameter("cid", cid.toString())
+            .addQueryParameter("fnval", "4048")
+            .addQueryParameter("platform", "pc")
+            .build()
+        val resp = getJson(url.toString(), referer = "https://www.bilibili.com/video/$bvid")
+        val play = json.decodeFromString<PlayUrlResponse>(resp)
+        if (play.code != 0) throw IOException("playurl 错误 ${play.code}: ${play.message}")
+        // 每个质量档(id)内 avc 排前(几乎所有设备可硬解),档位从高到低逐档列出
+        val streams = (play.data?.dash?.video.orEmpty())
+            .filter { it.baseUrl.isNotBlank() }
+        val urls = mutableListOf<String>()
+        streams.groupBy { it.id }                      // id = 质量档
+            .toSortedMap(compareByDescending { it })   // 高档在前,playurl 不给的档自然缺席
+            .forEach { (_, group) ->
+                // 同档内 avc 优先,再按带宽挑最高
+                group.sortedWith(
+                    compareByDescending<dev.avsong.data.remote.VideoStream> { it.codecs.startsWith("avc") }
+                        .thenByDescending { it.bandwidth },
+                ).forEach { s ->
+                    urls.add(s.baseUrl)
+                    s.backupUrl.filter { it.isNotBlank() }.forEach { b -> if (b !in urls) urls.add(b) }
+                }
+            }
+        if (urls.isEmpty()) throw IOException("无可用视频流")
+        return urls
     }
 
     /**

@@ -46,13 +46,16 @@ class PlayerController(private val context: Context) {
         }
     }
 
-    /** 已连接时同步执行,未连接则异步排队执行。 */
+    /** 未连接时的指令闸门:并发 launch 的调度顺序不保证,快速连点(播放/切歌)会乱序下发。 */
+    private val commandMutex = Mutex()
+
+    /** 已连接时同步执行,未连接则异步排队执行(排队路径按到达顺序串行)。 */
     private inline fun withController(crossinline block: (MediaController) -> Unit) {
         val ctrl = controller
         if (ctrl != null && ctrl.isConnected) {
             block(ctrl)
         } else {
-            scope.launch { block(controller()) }
+            scope.launch { commandMutex.withLock { block(controller()) } }
         }
     }
 
@@ -262,6 +265,29 @@ class PlayerController(private val context: Context) {
     fun duration(): Long =
         controller?.takeIf { it.isConnected }?.duration?.coerceAtLeast(0) ?: 0L
 
+    /**
+     * MV 画面开/关。
+     * ⚠ 必须走自定义 session command,**不能**在 controller 侧 replaceMediaItem:
+     * MediaController 跨 binder 拿到的 MediaItem 不带 localConfiguration(uri 是 session
+     * 私有数据,实测恒 null),拿不到 bvid 就静默失效——表现为「点了没反应」。
+     * 命令在 MusicService 侧执行,那边能看到完整 uri;结果经 [onResult] 回传。
+     */
+    fun toggleVideo(onResult: (Boolean) -> Unit = {}) {
+        scope.launch {
+            // sendCustomCommand 必须主线程(controller 绑定主线程,IO 调用直接 IllegalStateException);
+            // future.get() 是阻塞操作,切 IO 等结果
+            val future = controller().sendCustomCommand(
+                androidx.media3.session.SessionCommand(MusicService.COMMAND_TOGGLE_VIDEO, android.os.Bundle.EMPTY),
+                android.os.Bundle.EMPTY,
+            )
+            val result = withContext(Dispatchers.IO) { runCatching { future.get() }.getOrNull() }
+            onResult(result?.extras?.getBoolean(MusicService.EXTRA_IS_VIDEO) ?: false)
+        }
+    }
+
+    /** 给播放页挂/摘画面 surface(摘传 null)。MediaController 支持 surface 命令透传。 */
+    fun setVideoSurface(surface: android.view.Surface?) = withController { it.setVideoSurface(surface) }
+
     fun release() {
         controller?.release()
         controller = null
@@ -275,6 +301,12 @@ class PlayerController(private val context: Context) {
         val ctrl = controller()
         val listener = object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) {
+                trySend(ctrl.toState())
+            }
+
+            // 视频尺寸变化(切 MV 源/切歌)单独推一次:onEvents 的 toState 里 videoSize
+            // 也在读,但尺寸事件可能不触发任何其它事件,单独兜一下
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
                 trySend(ctrl.toState())
             }
         }
@@ -306,6 +338,14 @@ data class PlayerState(
      * 它已经算过 shuffle/repeat,**不能自己用 currentIndex+1**(随机播放时那是错的)。
      */
     val nextArtworkUri: String? = null,
+    /** 当前视频帧宽高(0=无视频/未知)。MV 态下按此比例铺 SurfaceView,非 16:9 源不再压扁。 */
+    val videoWidth: Int = 0,
+    val videoHeight: Int = 0,
+    /**
+     * 当前曲是否 MV(视频)源。service 切换时写进 item 的 MediaMetadata.extras,
+     * controller 跨 binder 回读 —— UI 的 MV 开关/画面层以此为准,不做本地记忆。
+     */
+    val isVideo: Boolean = false,
 )
 
 /** 队列里的一项(仅展示字段)。 */
@@ -351,5 +391,10 @@ internal fun MediaController.toState(): PlayerState {
         nextArtworkUri = nextMediaItemIndex
             .takeIf { it in 0 until mediaItemCount }
             ?.let { getMediaItemAt(it).mediaMetadata.artworkUri?.toString() },
+        // MV 视频帧尺寸:播放页按真实比例铺 SurfaceView(非 16:9 源不压扁)
+        videoWidth = videoSize.width,
+        videoHeight = videoSize.height,
+        // MV 态:controller 侧读不到 item.uri(trap 17),靠 service 切换时写进 metadata extras 的标记
+        isVideo = meta.extras?.getBoolean(MusicService.EXTRA_IS_VIDEO) == true,
     )
 }

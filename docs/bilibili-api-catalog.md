@@ -100,7 +100,7 @@
 | 端点 | 匿名 | 说明 |
 |---|---|---|
 | `GET /x/v2/reply/main?type=1&oid=<aid>&mode=3&next=0` | ✅ | 热评。`replies[].content.message / member.uname / like` → 播放页「热评」 |
-| `GET /x/web-interface/search/square?limit=10` | ✅ | 热搜榜 `trending.list[].keyword` → 搜索页热词 |
+| `GET /x/web-interface/search/square?limit=10` | ✅ | 热搜榜 `trending.list[].keyword`;**实测全是电竞/时政热词,对音乐 App 无引导价值** → App 内已改用音乐中心综合榜歌名 |
 | `GET /x/web-interface/search/default` | ✅ | 默认搜索词(占位符文案) |
 | `GET /x/web-interface/search/type` + `order=click\|pubdate\|dm\|stow` + `duration=1`(≤10min) + `tids=3`(音乐区) | ✅ | **排序与时长筛选**,现用搜索未启用 → 可做「按播放量/最新/只要短音频」 |
 | `GET /x/player/videoshot?bvid=&cid=` | ✅ | `image,index,img_x_len…` 雪碧图 → 进度条预览/封面墙 |

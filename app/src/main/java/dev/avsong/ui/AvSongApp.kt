@@ -533,6 +533,8 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                         onHistoryClick = viewModel::searchFromHistory,
                         onHistoryRemove = viewModel::removeHistory,
                         onHistoryClear = viewModel::clearHistory,
+                        // 热搜词:首次进搜索页拉一次(匿名 search/square)
+                        onEnsureHotKeywords = viewModel::ensureHotKeywords,
                         onPlayNext = viewModel::playNext,
                         onAddToQueue = viewModel::addToQueue,
                         onFavorite = { song ->
@@ -604,6 +606,8 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                                 app.settingsStore.setDanmakuMode(mode)
                             }
                         },
+                        downloadConcurrency = app.settingsStore.state.value.downloadConcurrency,
+                        onDownloadConcurrencyChange = { app.settingsStore.setDownloadConcurrency(it) },
                         onBack = { navController.popBackStack() },
                     )
                 }
@@ -743,6 +747,9 @@ fun AvSongApp(navController: NavHostController, viewModel: MainViewModel) {
                 onAdjustLyric = viewModel::adjustLyricOffset,
                 lyricRepository = viewModel.lyricRepository,
                 getCsrf = { app.authStore.state.value.biliJct },
+                onSimilarSongs = if (state.player.currentMediaId != null) viewModel::playRelated else null,
+                onToggleVideo = if (state.player.currentMediaId != null) viewModel::toggleVideo else null,
+                onVideoSurfaceChanged = { surface -> app.playerController.setVideoSurface(surface) },
                 // 播放页爱心的本地歌单区:快照直接用当前播放曲的 PlayerState 字段拼
                 localPlaylists = localPlaylists2,
                 localPlaylistsState = viewModel.localPlaylistStore.playlists,

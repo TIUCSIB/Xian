@@ -6,6 +6,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -30,22 +33,31 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SwapHoriz
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +80,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -86,6 +99,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -96,6 +110,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import kotlin.math.abs
 import kotlin.math.sin
+import androidx.compose.ui.viewinterop.AndroidView
 import dev.avsong.domain.formatClock
 import dev.avsong.player.PlayerState
 import dev.avsong.ui.LyricUiState
@@ -148,11 +163,54 @@ fun PlayerScreen(
     lyricRepository: dev.avsong.data.lyric.LyricRepository? = null,
     /** 热评点赞要 bili_jct;null/空 = 未登录,点赞钮提示去登录。 */
     getCsrf: () -> String? = { null },
+    /** 相似歌曲电台:以当前曲拉相关推荐整队替换起播(空=当前未在播放,不渲染)。 */
+    onSimilarSongs: (() -> Unit)? = null,
+    /** MV 画面开/关:service 侧原位替换当前曲源;结果(true=已开 MV)经 onResult 回传驱动本页画面层。 */
+    onToggleVideo: ((onResult: (Boolean) -> Unit) -> Unit)? = null,
+    /** 视频 surface 变更(挂画面传 Surface,摘画面传 null;MediaController 透传到服务端渲染)。 */
+    onVideoSurfaceChanged: (android.view.Surface?) -> Unit = {},
 ) {
     var position by remember(state.currentMediaId, state.isPlaying) { mutableLongStateOf(state.positionMs) }
     var showLyric by remember { mutableStateOf(false) }
-    // 歌词换源:候选弹窗开合与数据(点「换源」时才拉三源候选,拉一次缓存到关闭)
+    // MV 画面态 = service 事实源(PlayerState.isVideo 从当前 item 的 metadata extras 回读)。
+    // ⚠ 不能本地 remember:service 侧「移除+插回」会让 currentMediaId 瞬时变化把本地态重置,
+    // 出现「再点关不掉 / 勾选态和画面不同步」(实测踩过)
+    val mvActive = state.isVideo
+    // MV 切源/缓冲中:视频轨还没配置(videoWidth=0)或正在 prepare —— 画面层显示 loading,
+    // 否则切 MV 后那 1~2s 就是一整块黑框(用户反馈)
+    val mvLoading = state.isVideo && (state.videoWidth <= 0 || state.isBuffering)
+    // MV 全屏:点画面层右下角全屏键进入(锁横屏 + 隐藏系统栏),返回键/右上角 × 退出。
+    // 关 MV 或切歌自动退出 —— 否则回到纯音频还停在横屏黑屏
+    var mvFullscreen by remember { mutableStateOf(false) }
+    LaunchedEffect(mvActive, state.currentMediaId) {
+        if (!mvActive) mvFullscreen = false
+    }
+    // 系统栏与屏幕方向:进全屏→隐藏栏+锁横屏;退出/面板销毁→还原(面板是可销毁的覆盖层,onDispose 必须兜底)
+    val rootView = androidx.compose.ui.platform.LocalView.current
+    DisposableEffect(mvFullscreen) {
+        val activity = rootView.context.findActivity()
+        val window = activity?.window
+        val bars = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, rootView) }
+        if (mvFullscreen) {
+            bars?.systemBarsBehavior =
+                androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            bars?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            activity?.requestedOrientation =
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+        onDispose {
+            bars?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            // 退出后显式回竖屏:本 app 只做竖屏,推 UNSPECIFIED 在「自动旋转关闭」的设备上会永远停在横屏
+            activity?.requestedOrientation =
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+    // 全屏时返回键先退全屏(再按一次才收起播放面板)
+    androidx.activity.compose.BackHandler(enabled = mvFullscreen) { mvFullscreen = false }
+    // 歌词换源:候选抽屉(点 ⋮ 菜单「换歌词源」时拉三源候选,拉一次缓存到关闭)
     var showLyricPicker by remember { mutableStateOf(false) }
+    // 歌词时间轴校准:独立抽屉(菜单「歌词时间调整」进入)
+    var showLyricTimeSheet by remember { mutableStateOf(false) }
     // 热评数据:点热评键时按需拉一次(进页不自动拉不自动飘,用户要求)。
     // 固定首页 20 条,不翻页(实测后续页混入大量 0 赞低质评论,「热评」语义不成立,用户拍板)。
     var hotReplies by remember { mutableStateOf<List<dev.avsong.data.ReplyRepository.HotReply>>(emptyList()) }
@@ -309,7 +367,9 @@ fun PlayerScreen(
         }
 
         // 背景层:全幅封面 + 纯色黑纱(半透明实色,非渐变)。
-        // 封面态/歌词态共用 —— 两种状态只差在中间那张进度卡上,背景不换(用户要求);
+        // ⚠ MV 态整个跳过:封面图会盖住 SurfaceView 的视频画面(SurfaceView 在视图树后层),
+        // 只留浅纱提亮,视频条上下露出黑底(16:9 视频在竖屏本就上下留边)。
+        // 封面态/歌词态共用背景 —— 两种状态只差在中间那张进度卡上,背景不换(用户要求);
         // 但歌词态黑纱加深(0.55→0.78),亮封面(录音棚/暖色实拍)会把白字歌词吃掉看不清(用户实测)
         //
         // 切歌时新封面要重新下载,直接换 URL 会闪一下空底(用户报的「切歌像没加载完」)。
@@ -324,29 +384,85 @@ fun PlayerScreen(
             animationSpec = tween(durationMillis = 320),
             label = "artworkFade",
         )
-        Box(Modifier.fillMaxSize()) {
-            if (target != null && lastLoaded != null && lastLoaded != target) {
-                AsyncImage(
-                    model = lastLoaded,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
+        // 歌词态+MV 态:视频条不渲染,但没有封面垫底,直接深纱(歌词态 0.78 是实测的可读值)
+        if (!mvActive) {
+            Box(Modifier.fillMaxSize()) {
+                if (target != null && lastLoaded != null && lastLoaded != target) {
+                    AsyncImage(
+                        model = lastLoaded,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                if (target != null) {
+                    AsyncImage(
+                        model = target,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .alpha(fade.value),
+                        onSuccess = { lastLoaded = target },
+                        // 加载失败也推进:否则 lastLoaded 永远停在上一首,背景会一直卡着旧图
+                        onError = { lastLoaded = target },
+                    )
+                }
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (showLyric) 0.78f else 0.55f)))
+            }
+        } else if (!showLyric) {
+            // MV 封面态:浅纱(不遮画面,卡片文字仍可读);视频条外区域自然露黑底
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f)))
+        } else {
+            // MV 歌词态:视频条与歌词在 Column 内同屏(视频无纱/歌词区自带深纱),
+            // 全屏浅纱统一提亮;无封面垫底
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f)))
+        }
+
+        // MV 画面层:MV 态时 SurfaceView 以 16:9 视频条居中(叠在浅纱上、卡片之下)。
+        // Surface 挂载双保险:
+        // ① holder callback(destroyed 必须摘,后台不解码);
+        // ② LaunchedEffect 跟随播放状态重发 surface:service 端 MV 模式切换会 replaceMediaItem
+        //    重建渲染器,新 renderer 在 READY 前后需要重新拿到 surface,而视图没销毁时
+        //    holder 不会再回调 created。setVideoSurface 幂等,重发无害;key 变化即重发
+        var surfaceHolder by remember { mutableStateOf<android.view.SurfaceHolder?>(null) }
+        LaunchedEffect(mvActive, state.currentMediaId, state.isBuffering, state.isPlaying) {
+            surfaceHolder?.surface?.let { onVideoSurfaceChanged(it) }
+        }
+        DisposableEffect(mvActive) {
+            onDispose { onVideoSurfaceChanged(null) }
+        }
+        // 封面态的视频条(歌词态在 Column 内渲染自己的视频条,与歌词同屏)
+        if (mvActive && !showLyric && !mvFullscreen) {
+            // 视频条要完整露出来:居中于「顶栏与卡片之间」的区域(底部预留卡片高度,
+            // 实测全屏居中时视频下沿被信息卡压住歌词看不见)。
+            // 比例用 ExoPlayer 上报的真实 VideoSize(跨 binder 同步到 controller):
+            // 固定 16:9 会把非 16:9 源(宽银幕 MV/竖裁素材)压扁(实测);无信号回退 16:9
+            val vw = state.videoWidth
+            val vh = state.videoHeight
+            val ratio = if (vw > 0 && vh > 0) vw.toFloat() / vh else 16f / 9f
+            BoxWithConstraints(
+                Modifier.fillMaxSize().padding(bottom = 300.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                MvVideoSurface(
+                    // 宽屏源:按宽定高不超容器;高瘦源:按高定宽
+                    modifier = Modifier.then(
+                        if (ratio >= maxWidth / maxHeight) {
+                            Modifier.fillMaxWidth().aspectRatio(ratio)
+                        } else {
+                            Modifier.fillMaxHeight().aspectRatio(ratio)
+                        },
+                    ),
+                    loading = mvLoading,
+                    onSurfaceCreated = { holder ->
+                        surfaceHolder = holder
+                        onVideoSurfaceChanged(holder.surface)
+                    },
+                    onSurfaceReleased = { onVideoSurfaceChanged(null) },
+                    onToggleFullscreen = { mvFullscreen = true },
                 )
             }
-            if (target != null) {
-                AsyncImage(
-                    model = target,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .alpha(fade.value),
-                    onSuccess = { lastLoaded = target },
-                    // 加载失败也推进:否则 lastLoaded 永远停在上一首,背景会一直卡着旧图
-                    onError = { lastLoaded = target },
-                )
-            }
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (showLyric) 0.78f else 0.55f)))
         }
 
         val cardShape = RoundedCornerShape(28.dp)
@@ -357,7 +473,8 @@ fun PlayerScreen(
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp),
         ) {
-            // 顶栏:收起箭头(裸图标)。图标直接坐在封面上,用白色+淡黑描底保证任意封面可读
+            // 顶栏:左收起箭头、右「⋮」更多菜单(MV/电台等次级功能收进来,信息卡不再拥挤)。
+            // 图标直接坐在封面上,用白色保证任意封面可读
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -376,12 +493,159 @@ fun PlayerScreen(
                     )
                 }
                 Spacer(Modifier.weight(1f))
+                var showMoreMenu by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(
+                        onClick = { showMoreMenu = true },
+                        modifier = Modifier.size(44.dp),
+                    ) {
+                        Icon(
+                            Icons.Rounded.MoreHoriz,
+                            contentDescription = "更多",
+                            modifier = Modifier.size(24.dp),
+                            tint = if (state.artworkUri != null) Color.White
+                            else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showMoreMenu,
+                        onDismissRequest = { showMoreMenu = false },
+                    ) {
+                        // MV 画面开关(激活态前勾):service 端原位替换当前曲源
+                        if (onToggleVideo != null) {
+                            DropdownMenuItem(
+                                text = { Text("MV 画面") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Rounded.SmartDisplay,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = if (mvActive) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                },
+                                trailingIcon = {
+                                    if (mvActive) Icon(
+                                        Icons.Rounded.Check,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                },
+                                onClick = {
+                                    showMoreMenu = false
+                                    // 即将从 MV 切回纯音频:摘 surface —— renderer 移除有延迟,
+                                    // 不摘的话 SurfaceView 残帧会盖住恢复的封面(实测);延迟 600ms
+                                    // 再兜一次(renderer 侧 detach 是异步的,单次摘可能被晚到的
+                                    // 重建流程重新占住)
+                                    if (mvActive) {
+                                        onVideoSurfaceChanged(null)
+                                        scope.launch {
+                                            delay(600)
+                                            onVideoSurfaceChanged(null)
+                                        }
+                                    }
+                                    // 不开本地状态:开关结果由 service 写回 item metadata,
+                                    // 经 PlayerState.isVideo 回流(否则会与 service 真态漂移)
+                                    onToggleVideo { }
+                                },
+                            )
+                        }
+                        // 相似歌曲电台:40 条相关推荐整队替换随机起播
+                        if (onSimilarSongs != null) {
+                            DropdownMenuItem(
+                                text = { Text("相似歌曲电台") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Rounded.Radio,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                },
+                                onClick = {
+                                    showMoreMenu = false
+                                    onSimilarSongs()
+                                },
+                            )
+                        }
+                        // 换歌词源:低频操作收进菜单(原先贴在歌词区右上角,占位且易误触),
+                        // 点开仍是抽屉式候选列表(三源 + 手动搜索)
+                        if (lyricRepository != null && state.currentMediaId != null) {
+                            DropdownMenuItem(
+                                text = { Text("换歌词源") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Rounded.SwapHoriz,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                },
+                                onClick = {
+                                    showMoreMenu = false
+                                    showLyricPicker = true
+                                },
+                            )
+                            // 歌词时间调整:独立菜单项(±0.5s 整体校准),不再混在换源里
+                            DropdownMenuItem(
+                                text = { Text("歌词时间调整") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Rounded.Timer,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                },
+                                onClick = {
+                                    showMoreMenu = false
+                                    showLyricTimeSheet = true
+                                },
+                            )
+                        }
+                    }
+                }
             }
 
             // 歌词态:歌词铺满上半区(坐在封面黑纱上,用白色系文字),信息卡整个隐藏,
             // 点歌词空白处切回封面(歌词行本身的点击仍是 seek);封面态:留白把信息卡推到底部。
+            // MV 态同屏:视频条(真实比例)占上半区居中,歌词区在其下方继续滚动 —— 画面歌词一起看
             if (showLyric) {
-                Box(Modifier.fillMaxWidth().weight(1f)) {
+                if (mvActive && !mvFullscreen) {
+                    BoxWithConstraints(
+                        Modifier.fillMaxWidth().weight(0.62f),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        MvVideoSurface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(
+                                    if (state.videoWidth > 0 && state.videoHeight > 0) {
+                                        state.videoWidth.toFloat() / state.videoHeight
+                                    } else {
+                                        16f / 9f
+                                    },
+                                ),
+                            loading = mvLoading,
+                            onSurfaceCreated = { holder ->
+                                surfaceHolder = holder
+                                onVideoSurfaceChanged(holder.surface)
+                            },
+                            onSurfaceReleased = { onVideoSurfaceChanged(null) },
+                            onToggleFullscreen = { mvFullscreen = true },
+                        )
+                    }
+                }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .then(if (mvActive) Modifier.weight(0.38f) else Modifier.weight(1f)),
+                ) {
+                    // MV 同屏时歌词区垫一层深纱:白字歌词在视频画面上可读(浅纱会吃掉文字)
+                    if (mvActive) {
+                        Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.72f)))
+                    }
                     LyricView(
                         lyric = lyric,
                         positionMs = position,
@@ -393,20 +657,6 @@ fun PlayerScreen(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
                             ) { showLyric = false },
-                    )
-                    // 换源入口:歌词态右上角小图标(比文字钮轻,不抢歌词;点开候选弹窗)
-                    Icon(
-                        Icons.Rounded.SwapHoriz,
-                        contentDescription = "换歌词源",
-                        tint = Color.White.copy(alpha = 0.45f),
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 8.dp, end = 20.dp)
-                            .size(20.dp)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                            ) { showLyricPicker = true },
                     )
                 }
             } else {
@@ -750,7 +1000,8 @@ fun PlayerScreen(
             }
         }
 
-        // 歌词换源候选弹窗:列三源候选(网易云/lrclib/B站字幕),点选即应用并写缓存
+        // 换歌词源(抽屉式):⋮ 菜单「换歌词源」进入(低频操作,不再占歌词区常驻位),
+        // 三源候选 + 手动搜索,点选即应用并写缓存
         if (showLyricPicker) {
             val bvid = state.currentMediaId ?: ""
             ModalBottomSheet(
@@ -784,7 +1035,7 @@ fun PlayerScreen(
                         }
                     }
                 }
-                // 拉候选:进弹窗一次性收集三源(每源内部已限个数,总时长可控)
+                // 拉候选:进抽屉一次性收集三源(每源内部已限个数,总时长可控)
                 LaunchedEffect(bvid) {
                     if (candidates == null && bvid.isNotBlank()) {
                         try {
@@ -800,38 +1051,15 @@ fun PlayerScreen(
                     }
                 }
                 Column(
-                    Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 28.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 24.dp, end = 24.dp, bottom = 28.dp),
                 ) {
                     Text(
                         "换歌词源",
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
                     )
-                    // 时间轴微调:歌词总比唱快/慢半拍时手动校准(应用层整体偏移,随时可点)
-                    Row(
-                        Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "时间轴校准",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f),
-                        )
-                        listOf(-500L, 500L).forEach { delta ->
-                            Text(
-                                if (delta < 0) "-0.5s" else "+0.5s",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier
-                                    .padding(start = 8.dp)
-                                    .clip(RoundedCornerShape(50))
-                                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                                    .clickable { onAdjustLyric(delta) }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                            )
-                        }
-                    }
                     // 手动搜索框:自动查询词是搬运标题时经常搜不对(嵌套书名号/长标题),
                     // 用户自己敲真歌名最直接;键盘 Search 触发,清空回退自动候选
                     Row(
@@ -875,46 +1103,126 @@ fun PlayerScreen(
                             )
                         }
                     }
-                    when {
-                        manualError != null -> Text(
-                            manualError!!,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 24.dp),
-                        )
+                    // 候选列表:超过 380dp 才滚,避免长列表把抽屉顶到全屏
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 380.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        when {
+                            manualError != null -> Text(
+                                manualError!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 24.dp),
+                            )
 
-                        manualCandidates != null -> Column {
-                            manualCandidates!!.forEach { c ->
-                                LyricCandidateRow(c) {
-                                    lyricRepository!!.applyCandidate(bvid, c)
-                                    onLyricReplaced(c.lines)
-                                    showLyricPicker = false
+                            manualCandidates != null -> Column {
+                                manualCandidates!!.forEach { c ->
+                                    LyricCandidateRow(c) {
+                                        lyricRepository!!.applyCandidate(bvid, c)
+                                        onLyricReplaced(c.lines)
+                                        showLyricPicker = false
+                                    }
                                 }
                             }
-                        }
 
-                        candidates == null && loadError == null -> Box(
-                            Modifier.fillMaxWidth().padding(vertical = 40.dp),
-                            contentAlignment = Alignment.Center,
-                        ) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp) }
+                            candidates == null && loadError == null -> Box(
+                                Modifier.fillMaxWidth().padding(vertical = 40.dp),
+                                contentAlignment = Alignment.Center,
+                            ) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp) }
 
-                        candidates?.isEmpty() == true || (loadError != null && candidates == null) -> Text(
-                            loadError ?: "没有找到其他歌词源,试试上面的自己搜",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 24.dp),
-                        )
+                            candidates?.isEmpty() == true || (loadError != null && candidates == null) -> Text(
+                                loadError ?: "没有找到其他歌词源,试试上面的自己搜",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 24.dp),
+                            )
 
-                        else -> Column {
-                            candidates!!.forEach { c ->
-                                LyricCandidateRow(c) {
-                                    lyricRepository!!.applyCandidate(bvid, c)
-                                    onLyricReplaced(c.lines)
-                                    showLyricPicker = false
+                            else -> Column {
+                                candidates!!.forEach { c ->
+                                    LyricCandidateRow(c) {
+                                        lyricRepository!!.applyCandidate(bvid, c)
+                                        onLyricReplaced(c.lines)
+                                        showLyricPicker = false
+                                    }
                                 }
                             }
                         }
                     }
+
+                }
+            }
+        }
+
+        // 歌词时间调整(抽屉式,菜单「歌词时间调整」进入):整体 ±0.5s 校准、连点叠加,
+        // 当前偏移就地回显。与换源分开后,校准时不必再翻候选列表。
+        // 抽屉刻意做矮:M3 默认 dragHandle 上下各 22dp 很占高,换紧凑版(仅 14dp);
+        // 内容间距同步收紧 —— 只有两个按钮,不该铺半屏
+        if (showLyricTimeSheet) {
+            val offsetMs = (lyric as? LyricUiState.Ready)?.offsetMs ?: 0L
+            ModalBottomSheet(
+                onDismissRequest = { showLyricTimeSheet = false },
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 0.dp,
+                dragHandle = {
+                    Box(
+                        Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            Modifier
+                                .width(32.dp)
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)),
+                        )
+                    }
+                },
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 18.dp),
+                ) {
+                    Text(
+                        "歌词时间调整",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 2.dp),
+                    )
+                    Text(
+                        if (offsetMs == 0L) "当前:未校准"
+                        else "当前偏移:${if (offsetMs > 0) "+" else ""}${"%.1f".format(offsetMs / 1000f)}s",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        listOf(-500L, 500L).forEach { delta ->
+                            Text(
+                                if (delta < 0) "提前 0.5s" else "延后 0.5s",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 4.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                                    .clickable { onAdjustLyric(delta) }
+                                    .padding(vertical = 12.dp),
+                            )
+                        }
+                    }
+                    Text(
+                        "歌词比唱得快就「延后」,慢就「提前」",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
                 }
             }
         }
@@ -943,6 +1251,134 @@ fun PlayerScreen(
                     onDismiss = { showFavPicker = false },
                 )
             }
+        }
+
+        // MV 全屏画面层(最上层):只留画面,顶栏/卡片/歌词全部被盖住;右上角 × 或返回键退出。
+        // 全屏时两个条状视频层都停止组合(见上面的 !mvFullscreen 判断),保证同一时刻只有一个 SurfaceView
+        if (mvActive && mvFullscreen) {
+            BoxWithConstraints(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { /* 消费点击,避免穿透到下层面板 */ },
+                contentAlignment = Alignment.Center,
+            ) {
+                val vw = state.videoWidth
+                val vh = state.videoHeight
+                val ratio = if (vw > 0 && vh > 0) vw.toFloat() / vh else 16f / 9f
+                MvVideoSurface(
+                    // 横屏铺满高度、竖屏铺满宽度,另一维留黑边(contain)
+                    modifier = Modifier.then(
+                        if (ratio >= maxWidth / maxHeight) {
+                            Modifier.fillMaxWidth().aspectRatio(ratio)
+                        } else {
+                            Modifier.fillMaxHeight().aspectRatio(ratio)
+                        },
+                    ),
+                    loading = mvLoading,
+                    onSurfaceCreated = { holder ->
+                        surfaceHolder = holder
+                        onVideoSurfaceChanged(holder.surface)
+                    },
+                    onSurfaceReleased = { onVideoSurfaceChanged(null) },
+                )
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = "退出全屏",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(14.dp)
+                        .size(28.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { mvFullscreen = false },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * MV 画面层:SurfaceView + 切源 loading 占位 + 全屏键。
+ * Surface 生命周期仍由调用方上报 service(created 挂 / destroyed 摘);全屏键为 null 时不渲染。
+ */
+@Composable
+private fun MvVideoSurface(
+    modifier: Modifier,
+    loading: Boolean,
+    onSurfaceCreated: (android.view.SurfaceHolder) -> Unit,
+    onSurfaceReleased: () -> Unit,
+    onToggleFullscreen: (() -> Unit)? = null,
+) {
+    Box(modifier) {
+        AndroidView(
+            factory = { ctx ->
+                android.view.SurfaceView(ctx).apply {
+                    holder.addCallback(object : android.view.SurfaceHolder.Callback {
+                        override fun surfaceCreated(holder: android.view.SurfaceHolder) {
+                            onSurfaceCreated(holder)
+                        }
+
+                        override fun surfaceChanged(holder: android.view.SurfaceHolder, format: Int, width: Int, height: Int) {}
+
+                        override fun surfaceDestroyed(holder: android.view.SurfaceHolder) {
+                            onSurfaceReleased()
+                        }
+                    })
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
+        if (loading) MvLoadingOverlay()
+        if (onToggleFullscreen != null) {
+            // 全屏键:视频画面明暗不定,垫一层半透黑圆保证白色图标可读(纯色,不违反禁阴影/边框约定)
+            Icon(
+                Icons.Rounded.Fullscreen,
+                contentDescription = "全屏",
+                tint = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.32f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onToggleFullscreen() }
+                    .padding(6.dp),
+            )
+        }
+    }
+}
+
+/**
+ * MV 画面占位:切源/缓冲期间盖在视频区域上的黑纱 + 转圈 + 文案。
+ * 视频首帧出来前那块区域是黑的,不提示会被当成「点了没反应」。
+ */
+@Composable
+private fun MvLoadingOverlay() {
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(28.dp),
+                strokeWidth = 3.dp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "MV 加载中…",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White.copy(alpha = 0.85f),
+            )
         }
     }
 }
@@ -1081,4 +1517,15 @@ private fun WaveformSeekBar(
             }
         }
     }
+}
+
+
+/** Compose LocalView 的 context 可能包着 ContextThemeWrapper,逐层找 Activity(全屏锁方向要用)。 */
+private fun android.content.Context.findActivity(): android.app.Activity? {
+    var ctx: android.content.Context = this
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is android.app.Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }
