@@ -106,6 +106,7 @@ app/src/main/java/dev/avsong/
 19. **本机 Gradle 拉 Google Maven 超时**:dl.google.com 直连 Read timed out,但 git 代理(`127.0.0.1:10809`)可用——编译命令加 `-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=10809`(别写进 gradle.properties,代理不一定常开)。
 20. **MergingMediaSource(音视频合并)两路数据源几乎同时打开**:resolver 的错误重试计数若按 bvid 单值记,第二路会被误判成「错误重试」直接落到备用 CDN——`BiliDataSources` 的计数 key 必须带音/视频 lane。
 21. **MV 态不能用 item uri 判断**:`biliMediaSourceFactory` 对 MV 曲返回 `MergingMediaSource`,其 `getMediaItem()` 取第一个子源(音频轨)的 item —— 播放列表里 MV 曲的 uri 恒为 `bili://`(实测)。事实源只能是 `MediaMetadata.extras` 的 `is_video`(toggle 时写、`PlayerState.isVideo` 跨 binder 回读):按 uri.scheme 判断会「只能开、关不掉」(用户报的点了不切换);恢复现场也要按快照 uri 还原这个标记。UI 的 MV 开关一律用 `state.isVideo`,别本地 remember(service 的移除+插回会让 mediaId 瞬时变化重置本地态)。
+22. **会员态字段名两处不一致**:nav 顶层的 `data.vipStatus` 是权威值,嵌套 `data.vip` 对象里却叫 `status`(不是 `vipStatus`)。只查 `vip.vipStatus` 会让大会员恒被判成普通用户(UI 显示「正式会员」/「普通用户(音质上限 192K)」,2026-11-16 用户实测)。取流侧:大会员 + 目标无损优先走 wbi 签名 playurl(nav `wbi_img` 密钥缓存 12h),失败回退旧端点。
 
 ## 代码约定
 
@@ -142,6 +143,7 @@ app/src/main/java/dev/avsong/
 
 - 色板+色相轮盘走 ModalBottomSheet,**不自动关**(逐色预览);轮盘拖动 `previewHue` 只改内存、松手 `persistHue` 落盘(每帧写盘太重)。
 - 设置卡在「我的」页,展开后进 `PlaybackSettingsScreen`(音质/历史上限/倍速/睡眠/热评/下载并发);选项用 `SettingsExpandableItem` **行内展开**(用户否掉了弹抽屉样式),同一时间只展开一项。
+- **默认音质 = 无损 FLAC**:大会员直接拿 flac/dolby;非大会员或无无损源的歌在 `pickStream` 自动降级到可用最高(192K),不比旧默认差,也省得大会员手动切。大会员取流优先 wbi 签名端点(见陷阱 22)。
 - 倍速持久化在 `SettingsStore.playbackSpeed`;⚠ app 启动 collect settings **必须 `launch(Dispatchers.Main)`**——appScope 是 Dispatchers.Default,MediaController 跨线程调 `setPlaybackSpeed` 直接 IllegalStateException 崩(踩过)。
 - 睡眠定时只存内存不持久化(睡醒残留倒计时比丢设置更糟);到点只 pause 不 toggle,否则恰好暂停时被反手起播。
 - 硬币数是 nav 的 `data.money`,`data.coin` 是 B 币余额常缺省(docs §9);进「我的」tab 静默刷一次资料(只刷一次防 collect 循环)。

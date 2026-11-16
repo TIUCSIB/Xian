@@ -23,6 +23,10 @@ object BiliHttp {
     @Volatile
     var authCookie: String? = null
 
+    /** 当前登录账号是否大会员(AvSongApp 从 AuthState 同步;取流时决定要不要走 wbi 高音质端点)。 */
+    @Volatile
+    var isVipAccount: Boolean = false
+
     val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .addInterceptor(BiliHeaderInterceptor())

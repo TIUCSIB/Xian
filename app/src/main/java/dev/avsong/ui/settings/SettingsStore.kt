@@ -33,7 +33,9 @@ object SettingsStore {
     }
 
     data class SettingsState(
-        val quality: Quality = Quality.HIGH,
+        // 默认求最高音质:大会员直接拿到 FLAC;非大会员在选路时自动降级到可用最高(192K),
+        // 不会比默认 192K 更差,也省得大会员还要手动进设置切一次。
+        val quality: Quality = Quality.LOSSLESS,
         val historyLimit: Int = 50, // 0=不限
         /** 播放页热评展示:0=弹幕(飘动),1=列表(底部抽屉 3/4 屏)。持久化。 */
         val danmakuMode: Int = 0,
@@ -74,7 +76,7 @@ object SettingsStore {
         val p = datastore.data.first()
         _state.value = SettingsState(
             quality = p[KEY_QUALITY]?.let { id -> Quality.entries.firstOrNull { it.id == id } }
-                ?: Quality.HIGH,
+                ?: Quality.LOSSLESS,
             historyLimit = p[KEY_HISTORY] ?: 50,
             danmakuEnabled = p[KEY_DANMAKU] ?: true,
             danmakuMode = p[KEY_DANMAKU_MODE] ?: 0,

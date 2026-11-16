@@ -275,10 +275,17 @@ object BiliSongRepository : SongRepository {
 
     @Throws(IOException::class)
     fun playUrlBlocking(bvid: String, cid: Long): AudioStream {
+        // 大会员 + 目标无损:优先 wbi 签名端点(B 站近年把 flac/杜比等大会员流与 wbi 鉴权绑定,
+        // 旧端点可能只回普通档)。签名/风控/网络任一失败立即回退旧端点,不阻断普通播放。
+        if (BiliHttp.isVipAccount && SettingsStore.state.value.quality == SettingsStore.Quality.LOSSLESS) {
+            runCatching { wbiPlayUrlBlocking(bvid, cid) }.getOrNull()?.let { return it }
+        }
         val url = (baseUrl + "/x/player/playurl").toHttpUrl().newBuilder()
             .addQueryParameter("bvid", bvid)
             .addQueryParameter("cid", cid.toString())
             .addQueryParameter("fnval", "4048") // 含 FLAC/杜比位域;普通账号仍只回 192K
+            .addQueryParameter("fnver", "0")
+            .addQueryParameter("fourk", "1")
             .addQueryParameter("platform", "pc")
             .build()
         val resp = getJson(url.toString(), referer = "https://www.bilibili.com/video/$bvid")
@@ -286,6 +293,48 @@ object BiliSongRepository : SongRepository {
         if (play.code != 0) throw IOException("playurl 错误 ${play.code}: ${play.message}")
         val dash = play.data?.dash ?: throw IOException("无可用音频流(可能需要大会员)")
         return pickStream(dash)
+    }
+
+    /** wbi 签名版 playurl(大会员高音质用);密钥来自 nav 的 wbi_img,缓存 12h。 */
+    @Throws(IOException::class)
+    private fun wbiPlayUrlBlocking(bvid: String, cid: Long): AudioStream {
+        val mixinKey = wbiMixinKeyBlocking() ?: throw IOException("wbi 密钥不可用")
+        val signed = dev.avsong.data.remote.WbiSign.encWbi(
+            mapOf(
+                "bvid" to bvid,
+                "cid" to cid.toString(),
+                "fnval" to "4048",
+                "fnver" to "0",
+                "fourk" to "1",
+                "platform" to "pc",
+            ),
+            mixinKey,
+        )
+        val builder = (baseUrl + "/x/player/wbi/playurl").toHttpUrl().newBuilder()
+        signed.forEach { (k, v) -> builder.addQueryParameter(k, v) }
+        val resp = getJson(builder.build().toString(), referer = "https://www.bilibili.com/video/$bvid")
+        val play = json.decodeFromString<PlayUrlResponse>(resp)
+        if (play.code != 0) throw IOException("wbi playurl 错误 ${play.code}: ${play.message}")
+        val dash = play.data?.dash ?: throw IOException("wbi playurl 无音频流")
+        return pickStream(dash)
+    }
+
+    @Volatile private var wbiMixinKey: String? = null
+    @Volatile private var wbiMixinKeyAtMs: Long = 0
+
+    @Throws(IOException::class)
+    private fun wbiMixinKeyBlocking(): String? {
+        val now = System.currentTimeMillis()
+        wbiMixinKey?.let { if (now - wbiMixinKeyAtMs < 12 * 60 * 60 * 1000L) return it }
+        val resp = getJson("$baseUrl/x/web-interface/nav", referer = BiliConstants.REFERER)
+        val img = json.decodeFromString<dev.avsong.data.remote.NavResponse>(resp).data?.wbiImg
+        val imgKey = img?.imgUrl?.substringAfterLast('/')?.substringBefore('.')
+        val subKey = img?.subUrl?.substringAfterLast('/')?.substringBefore('.')
+        if (imgKey.isNullOrBlank() || subKey.isNullOrBlank()) return null
+        return dev.avsong.data.remote.WbiSign.getMixinKey(imgKey, subKey).also {
+            wbiMixinKey = it
+            wbiMixinKeyAtMs = now
+        }
     }
 
     /**
@@ -300,6 +349,8 @@ object BiliSongRepository : SongRepository {
             .addQueryParameter("bvid", bvid)
             .addQueryParameter("cid", cid.toString())
             .addQueryParameter("fnval", "4048")
+            .addQueryParameter("fnver", "0")
+            .addQueryParameter("fourk", "1")
             .addQueryParameter("platform", "pc")
             .build()
         val resp = getJson(url.toString(), referer = "https://www.bilibili.com/video/$bvid")
@@ -337,16 +388,27 @@ object BiliSongRepository : SongRepository {
             ?: throw IOException("无可用音频流(可能需要大会员)")
         val best = regular.maxByOrNull { it.bandwidth }!! // 免费上限 192K=30280
 
-        return when (SettingsStore.state.value.quality) {
+        val quality = SettingsStore.state.value.quality
+        val picked = when (quality) {
             dev.avsong.ui.settings.SettingsStore.Quality.LOSSLESS -> flac ?: dolby ?: best
             else -> {
-                val target = SettingsStore.state.value.quality.id
+                val target = quality.id
                 // 用户指定档位精确命中(192K=30280 的 id 就是档位)
-                regular.firstOrNull { it.id == target }?.let { return it }
-                // 目标不可用:取 id 不高于目标里的最高档,再兜底最高档
-                regular.filter { it.id <= target }.maxByOrNull { it.id } ?: best
+                regular.firstOrNull { it.id == target }
+                    // 目标不可用:取 id 不高于目标里的最高档,再兜底最高档
+                    ?: regular.filter { it.id <= target }.maxByOrNull { it.id }
+                    ?: best
             }
         }
+        if (dev.avsong.BuildConfig.DEBUG) {
+            // 排查「大会员仍走 192K」:一眼看出响应里到底有没有 flac/dolby,以及最终选的档位
+            android.util.Log.d(
+                "BiliAudio",
+                "quality=$quality flac=${flac?.id} dolby=${dolby?.id} " +
+                    "regular=${regular.map { it.id }} -> picked=${picked.id}",
+            )
+        }
+        return picked
     }
 
     // ---------- 搜索 / 榜单 ----------

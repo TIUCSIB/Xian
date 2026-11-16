@@ -110,15 +110,23 @@ object QrLogin {
                 // isLogin=true 但昵称为空属异常响应,保留旧资料不覆盖
                 nav.uname.isBlank() -> ProfileResult.Error
 
-                else -> ProfileResult.Ok(
-                    Profile(
-                        uname = nav.uname,
-                        face = nav.face.takeIf { it.isNotBlank() }?.let(::httpsUrl),
-                        vipLabel = nav.vip?.label?.text?.takeIf { it.isNotBlank() && nav.vip?.vipStatus == 1 },
-                        level = nav.levelInfo?.currentLevel ?: 0,
-                        coin = nav.coin,
-                    ),
-                )
+                else -> {
+                    // ⚠ 大会员判定:nav 顶层的 vipStatus 才是权威字段;嵌套 vip 对象里叫
+                    // `status`(不是 vipStatus)。只查 vip.vipStatus 会漏判,UI 把大会员显示成「正式会员」。
+                    val isVip = nav.vipStatus == 1 || nav.vip?.status == 1 || nav.vip?.vipStatus == 1
+                    ProfileResult.Ok(
+                        Profile(
+                            uname = nav.uname,
+                            face = nav.face.takeIf { it.isNotBlank() }?.let(::httpsUrl),
+                            // label.text 缺失时兜底「大会员」,别让已付费账号显示成普通用户
+                            vipLabel = if (isVip) {
+                                nav.vip?.label?.text?.takeIf { it.isNotBlank() } ?: "大会员"
+                            } else null,
+                            level = nav.levelInfo?.currentLevel ?: 0,
+                            coin = nav.coin,
+                        ),
+                    )
+                }
             }
         } catch (e: Exception) {
             ProfileResult.Error

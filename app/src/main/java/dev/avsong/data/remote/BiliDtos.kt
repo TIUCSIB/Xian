@@ -199,6 +199,14 @@ data class NavData(
     @SerialName("level_info") val levelInfo: NavLevelInfo? = null,
     val vip: NavVip? = null,
     @SerialName("vipStatus") val vipStatus: Int = 0,
+    // wbi 签名密钥(未登录也返回,code:-101 时同样可用)
+    @SerialName("wbi_img") val wbiImg: NavWbiImg? = null,
+)
+
+@Serializable
+data class NavWbiImg(
+    @SerialName("img_url") val imgUrl: String = "",
+    @SerialName("sub_url") val subUrl: String = "",
 )
 
 @Serializable
@@ -208,7 +216,11 @@ data class NavLevelInfo(
 
 @Serializable
 data class NavVip(
-    @SerialName("vipStatus") val vipStatus: Int = 0,
+    // ⚠ nav 的 vip 对象实际字段是 `status`/`type`(2026-11-16 核对 API 文档);
+    // `vipStatus` 只是部分其它接口的同义字段。只认 vipStatus 会让大会员永远被当成普通用户。
+    val status: Int = 0,
+    val type: Int = 0,
+    @SerialName("vipStatus") val vipStatus: Int = 0, // 兼容个别返回两种字段的接口
     val label: NavVipLabel? = null,
 )
 

@@ -57,12 +57,13 @@ Referer: https://www.bilibili.com/video/<bvid>
 ## 5. 音频直链 — `/x/player/playurl` ⚠ 非 wbi 版
 
 ```
-GET https://api.bilibili.com/x/player/playurl?bvid=<bvid>&cid=<cid>&fnval=4048&platform=pc
+GET https://api.bilibili.com/x/player/playurl?bvid=<bvid>&cid=<cid>&fnval=4048&fnver=0&fourk=1&platform=pc
 Cookie: buvid3=..; buvid4=..
 Referer: https://www.bilibili.com/video/<bvid>
 ```
 
-- ⚠ wbi 版端点(`/x/player/wbi/playurl`)实测该 IP 间歇 412(风控,与签名无关);**旧端点稳定 code:0 且返回结构相同**,主用旧端点。
+- ⚠ wbi 版端点(`/x/player/wbi/playurl`)实测该 IP 间歇 412(风控,与签名无关);**旧端点稳定 code:0 且返回结构相同**,普通档位主用旧端点。
+- **大会员高音质(2026-11-16 实现)**:目标为无损且 `AuthStore.isVip` 时,优先走 wbi 签名端点(参数含 `wts`/`w_rid`,密钥取自 nav 的 `data.wbi_img`,缓存 12h);签名/412/网络任一失败立即回退旧端点。两条路径都带 `fnver=0&fourk=1`。
 - 音频在 `data.dash.audio[]`(**未排序**):`id`(音质档)、`baseUrl`(直链)、`backupUrl[]`、`bandwidth`、`codecs`。
 - 音质档:`30216`=64K、`30232`=132K、**`30280`=192K(免费最高)**;`30250` 杜比、`30251` Hi-Res 仅大会员。
 - ⚠ **fnval 用 4048**(不是 16):16 只回普通 dash.audio;4048 才会带出 `dash.flac`/`dash.dolby`(大会员)。普通账号 4048 也安全(实测仍只回 30216/30232/30280)。
@@ -114,11 +115,12 @@ GET https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=<k
 ```
 
 - 二维码约 180s 过期;轮询 1.5~2s 一次。
-- 登录后 `GET api.bilibili.com/x/web-interface/nav`(此时 code:0)取用户资料。⚠ 实测(2026-10-11)字段映射:**`data.money` 是硬币数,`data.coin` 是 B 币余额且响应里常缺省**——别映射反;等级在 `data.level_info.current_level`(Lv0~6);头像 `data.face` 可能带 `http://`/`//` 协议头,展示前归一化 https;`data.vip.vipStatus==1` 时 `data.vip.label.text` 才是会员文案,非会员别渲染。DTO 在 `BiliDtos.kt`,拉取+持久化在 `QrLogin.fetchProfile`/`AuthStore`。
+- 登录后 `GET api.bilibili.com/x/web-interface/nav`(此时 code:0)取用户资料。⚠ 实测(2026-10-11)字段映射:**`data.money` 是硬币数,`data.coin` 是 B 币余额且响应里常缺省**——别映射反;等级在 `data.level_info.current_level`(Lv0~6);头像 `data.face` 可能带 `http://`/`//` 协议头,展示前归一化 https;**会员判定用顶层 `data.vipStatus==1`(权威)或嵌套 `data.vip.status==1`;⚠ 嵌套对象里没有 `vipStatus` 字段**(2026-11-16 核对:只查 `data.vip.vipStatus` 会让大会员恒显示成「正式会员」/「普通用户(音质上限 192K)」);会员文案在 `data.vip.label.text`。DTO 在 `BiliDtos.kt`,拉取+持久化在 `QrLogin.fetchProfile`/`AuthStore`。
 - Cookie 持久化:DataStore(`data/auth/AuthStore.kt`);注入:`BiliHttp.authCookie` → 拦截器拼进所有请求 Cookie 头(与 buvid 合并)。
 - ⚠ 实测:generate 端点在 **api.bilibili.com 域返回 404**,必须走 passport 域。
-- 登录后 playurl 的 `dash.audio` 会出现更高档(30232→30280→30251 Hi-Res/30250 杜比,FLAC 在 `data.dash.flac`)。`maxByOrNull { bandwidth }` 能自动选中 audio 里最高档;**但 FLAC/Hi-Res 可能需要更大的 fnval 位域(如 4048)才返回,待登录后实测**。
+- 登录后 playurl 的 `dash.audio` 会出现更高档(30232→30280→30251 Hi-Res/30250 杜比,FLAC 在 `data.dash.flac`)。`maxByOrNull { bandwidth }` 能自动选中 audio 里最高档。**取流实现:大会员 + 目标无损优先 wbi 签名端点,失败回退旧端点**(`BiliSongRepository.playUrlBlocking`)。
 - ✅ 实测(普通登录用户,非大会员):playurl 返回档位与匿名相同,上限仍 30280=192K。**音质提升仅对大会员生效**,登录本身不解锁 320K。
+- ✅ 实测(2026-11-16,大会员账号):wbi 签名端点 + `fnval=4048|fnver=0|fourk=1` 对有无损源的视频返回 `dash.flac.audio.id=30251`,app 日志 `flac=30251 -> picked=30251` 且正常播放;没有无损源的视频 `flac=null`,自动降级 192K。**FLAC 是否存在取决于视频本身有没有无损音轨,不是所有歌都有。**
 - 实现:`data/auth/QrLogin.kt`(generate/poll/fetchProfile)。
 
 ## 10. 歌词(第三方:网易云公开接口)

@@ -83,7 +83,25 @@ class AvSongApp : Application(), SingletonImageLoader.Factory {
         // 登录态 → OkHttp 拦截器的 Cookie 注入点(含启动时的持久化恢复)
         appScope.launch {
             authStore.load()
-            authStore.state.collect { BiliHttp.authCookie = it.cookieHeader() }
+            // 先接线,再刷新:nav 请求必须带登录 Cookie
+            BiliHttp.authCookie = authStore.state.value.cookieHeader()
+            BiliHttp.isVipAccount = authStore.state.value.isVip
+            if (authStore.state.value.isLoggedIn) {
+                // 启动时静默刷一次资料:修正旧版本存下的空会员标签(大会员被显示成正式会员),
+                // 也让取流层立刻知道当前是否大会员。失败只保留本地资料,绝不动会话。
+                runCatching {
+                    when (val r = dev.avsong.data.auth.QrLogin.fetchProfileResult()) {
+                        is dev.avsong.data.auth.QrLogin.ProfileResult.Ok -> authStore.saveProfile(
+                            r.profile.uname, r.profile.face, r.profile.vipLabel, r.profile.level, r.profile.coin,
+                        )
+                        else -> Unit
+                    }
+                }
+            }
+            authStore.state.collect {
+                BiliHttp.authCookie = it.cookieHeader()
+                BiliHttp.isVipAccount = it.isVip
+            }
         }
         // 已保存合集(UP 主合集=歌单)的本地持久化恢复
         appScope.launch { collectionStore.load() }
